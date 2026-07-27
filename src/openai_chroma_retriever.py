@@ -12,33 +12,28 @@ class OpenAIChromaRetriever:
         load_dotenv()  # 환경변수(.env)에서 OPENAI_API_KEY 로드
         self.config = config
 
-        # retrieval 설정이 config에 있는지 확인하고, 없으면 그냥 self.config 가져오고 있으면 retriever 가져오기
-        if "retrieval" in self.config:
-            retrieval_config = self.config["retrieval"]
-        else:
-            retrieval_config = self.config
-
-        # yaml에서 설정 가져오기
-        openai_config = retrieval_config.get("profiles", {}).get("openai", {})
+        # retrieval 설정
+        retrieval_config = self.config["retrieval"]
+        openai_config = retrieval_config["profiles"]["openai"]
         
-        embedding_model = openai_config.get("embedding_model", "text-embedding-3-small") # 뒤에 text-embedding-3-small 은 안전장치 (하드코딩 아님)
-        persist_directory = openai_config.get("persist_directory", "vector_db/openai") # 마찬가지
-        collection_name = openai_config.get("collection_name", "bidmate_openai") # 마찬가지
+        embedding_model = openai_config["embedding_model"]
+        persist_directory = openai_config["persist_directory"]
+        collection_name = openai_config["collection_name"]
         
         # OpenAI 임베딩 생성기 초기화
         self.embeddings = OpenAIEmbeddings(model=embedding_model)
 
-        # top_k 값 설정 (yaml에서 설정한 값이 없으면 기본값 3으로 설정)
-        self.default_top_k = retrieval_config.get("top_k", 3)
+        # top_k 값 설정
+        self.default_top_k = retrieval_config["top_k"]
 
         # 검색 방식 설정
-        self.search_method = retrieval_config.get("search_method", "similarity")
+        self.search_method = retrieval_config["search_method"]
 
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
-        self.fetch_k_base = openai_config.get("fetch_k", 50)  # 부분 일치 검색 활용, 기본값 50
+        self.fetch_k_base = openai_config["fetch_k"]  # 부분 일치 검색 활용
 
         # mmr 조절값 설정
-        self.lambda_mult = openai_config.get("lambda_mult", 0.5)
+        self.lambda_mult = openai_config.get["lambda_mult"]
 
         # Vector DB 생성
         self.vectorstore = Chroma(
