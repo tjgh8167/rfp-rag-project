@@ -5,10 +5,9 @@ from dataclasses import asdict
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.output_parsers import StrOutputParser
 
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 
 from src.retriever import SearchResult
@@ -176,22 +175,22 @@ def generate_answer(
     max_turns = gen_config["history"]["max_turns"]
 
     llm = build_llm(config)
+    context = build_context(results)
+    history_messages = build_history_messages(history, max_turns)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_RULE + "\n\nContext:\n{context}"),
         MessagesPlaceholder("history", optional=True),
         ("human", "{question}")
     ])
+    messages = prompt.format_messages(
+        context=context, question=question, history=history_messages
+    )
 
-    chain = prompt | llm | StrOutputParser()
-
-    context = build_context(results)
-    history_messages = build_history_messages(history, max_turns)
-    answer = chain.invoke({
-        "context": context,
-        "question": question,
-        "history": history_messages,
-    })
+    if needs_calculator(question):
+        answer = _generate_with_tool_calling(llm, messages)
+    else:
+        answer = llm.invoke(messages).content
 
     return {
         "answer": answer,
