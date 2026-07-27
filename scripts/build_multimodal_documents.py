@@ -9,21 +9,17 @@ import tempfile
 from statistics import median
 from pathlib import Path
 
-# 라이브러리는 개인 가상환경에 설치하고, 대용량 Qwen 모델만 팀 공용 캐시를 사용한다.
-os.environ.setdefault("HF_HOME", "/data/model_cache/huggingface")
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import fitz
 import pandas as pd
-import torch
 import yaml
-from paddleocr import PaddleOCR
 from PIL import Image
-from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
+
+# paddleocr/transformers는 import 시점에 HF_HOME을 읽어 모델 캐시 경로를 확정한다.
+# config의 model_cache_path를 반영하려면 그 이후에 import해야 하므로 MultimodalExtractor 안에서 지연 import한다.
 
 from src.ocr_extractor import extract_hwp_images, extract_pdf_images
 
@@ -120,6 +116,10 @@ def combined_context(ocr_text: str, layout: dict, vlm_text: str | None) -> str:
 
 class MultimodalExtractor:
     def __init__(self, options: dict):
+        # 무거운 라이브러리를 import하기 전에 모델 캐시 경로를 확정한다.
+        os.environ["HF_HOME"] = options["model_cache_path"]
+        from paddleocr import PaddleOCR
+
         self.ocr = PaddleOCR(
             lang=options["paddle_language"],
             ocr_version=options["paddle_ocr_version"],
@@ -141,6 +141,11 @@ class MultimodalExtractor:
     def load_vlm(self) -> None:
         if self.model is not None:
             return
+        import torch
+        from qwen_vl_utils import process_vision_info
+        from transformers import AutoProcessor, BitsAndBytesConfig, Qwen2_5_VLForConditionalGeneration
+
+        self.process_vision_info = process_vision_info
         quantization = BitsAndBytesConfig(
             load_in_4bit=self.options["load_in_4bit"],
             bnb_4bit_compute_dtype=getattr(torch, self.options["bnb_4bit_compute_dtype"]),
@@ -176,7 +181,7 @@ class MultimodalExtractor:
             {"type": "text", "text": instruction},
         ]}]
         prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        image_inputs, video_inputs = process_vision_info(messages)
+        image_inputs, video_inputs = self.process_vision_info(messages)
         inputs = self.processor(text=[prompt], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt").to(self.model.device)
         generated_ids = self.model.generate(
             **inputs,
@@ -220,7 +225,6 @@ def main() -> None:
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     paths = config["paths"]
     options = config["multimodal"]
-    os.environ["HF_HOME"] = options["model_cache_path"]
     metadata = pd.read_csv(paths["metadata"], encoding="utf-8")
     raw_documents = Path(paths["raw_documents"])
     if args.limit is not None:
@@ -314,7 +318,7 @@ def main() -> None:
                         "image_sha256": image_hash,
                         "width": width,
                         "height": height,
-                        "ocr_engine": "PaddleOCR PP-OCRv5",
+                        "ocr_engine": f"PaddleOCR {options['paddle_ocr_version']}",
                         "ocr_text": ocr_text,
                         "spatial_layout": layout,
                         "combined_context": combined_context(ocr_text, layout, vlm_text),

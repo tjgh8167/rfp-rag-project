@@ -207,7 +207,7 @@ def main() -> None:
     report_rows = []
     raw_documents = Path(paths["raw_documents"])
     for index, row in metadata.iterrows():
-        file_name = str(row.iloc[10]).strip()
+        file_name = str(row["파일명"]).strip()
         file_path = raw_documents / file_name
         if not file_path.is_file():
             continue

@@ -81,7 +81,7 @@ multimodal:
   min_vlm_height: 200
   layout_row_gap_multiplier: 1.5
   model_cache_path: /data/model_cache/huggingface
-  python_path: ~/venvs/sprint-ai-vlm/bin/python
+  python_path: ~/venvs/sprint-ai-multimodal/bin/python  # paddleocr + transformers 모두 필요
   pdf_render_scale: 2
   paddle_language: korean
   paddle_ocr_version: PP-OCRv5
