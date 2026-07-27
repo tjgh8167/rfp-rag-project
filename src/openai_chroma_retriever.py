@@ -33,7 +33,7 @@ class OpenAIChromaRetriever:
         self.fetch_k_base = openai_config["fetch_k"]  # 부분 일치 검색 활용
 
         # mmr 조절값 설정
-        self.lambda_mult = openai_config.get["lambda_mult"]
+        self.lambda_mult = openai_config["lambda_mult"]
 
         # Vector DB 생성
         self.vectorstore = Chroma(
