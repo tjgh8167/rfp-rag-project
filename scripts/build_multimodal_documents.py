@@ -36,7 +36,11 @@ def image_size(image_bytes: bytes) -> tuple[int, int]:
         return image.size
 
 
-def document_images(path: Path, min_pdf_text_length: int) -> list[dict]:
+def document_images(
+    path: Path,
+    min_pdf_text_length: int,
+    pdf_render_scale: int,
+) -> list[dict]:
     if path.suffix.lower() == ".hwp":
         return extract_hwp_images(path)
 
@@ -46,7 +50,7 @@ def document_images(path: Path, min_pdf_text_length: int) -> list[dict]:
         for page_number, page in enumerate(document, start=1):
             if len(page.get_text("text").strip()) >= min_pdf_text_length:
                 continue
-            rendered = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            rendered = page.get_pixmap(matrix=fitz.Matrix(pdf_render_scale, pdf_render_scale), alpha=False)
             images.append(
                 {
                     "page_number": page_number,
@@ -115,10 +119,18 @@ def combined_context(ocr_text: str, layout: dict, vlm_text: str | None) -> str:
 
 
 class MultimodalExtractor:
-    def __init__(self, model_name: str, gap_multiplier: float):
-        self.ocr=PaddleOCR(lang="korean", ocr_version="PP-OCRv5", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, device="cpu")
-        self.model_name=model_name
-        self.gap_multiplier=gap_multiplier
+    def __init__(self, options: dict):
+        self.ocr = PaddleOCR(
+            lang=options["paddle_language"],
+            ocr_version=options["paddle_ocr_version"],
+            use_doc_orientation_classify=options["paddle_use_doc_orientation_classify"],
+            use_doc_unwarping=options["paddle_use_doc_unwarping"],
+            use_textline_orientation=options["paddle_use_textline_orientation"],
+            device=options["paddle_device"],
+        )
+        self.options = options
+        self.model_name = options["model"]
+        self.gap_multiplier = options["layout_row_gap_multiplier"]
         self.model=None
         self.processor=None
 
@@ -129,8 +141,15 @@ class MultimodalExtractor:
     def load_vlm(self) -> None:
         if self.model is not None:
             return
-        quantization=BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)
-        self.model=Qwen2_5_VLForConditionalGeneration.from_pretrained(self.model_name, quantization_config=quantization, device_map="auto")
+        quantization = BitsAndBytesConfig(
+            load_in_4bit=self.options["load_in_4bit"],
+            bnb_4bit_compute_dtype=getattr(torch, self.options["bnb_4bit_compute_dtype"]),
+        )
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            self.model_name,
+            quantization_config=quantization,
+            device_map=self.options["device_map"],
+        )
         self.processor=AutoProcessor.from_pretrained(self.model_name)
 
     def extract_vlm(self, image_path: str, ocr_text: str | None = None) -> str:
@@ -159,7 +178,11 @@ class MultimodalExtractor:
         prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(text=[prompt], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt").to(self.model.device)
-        generated_ids = self.model.generate(**inputs, max_new_tokens=180, do_sample=False)
+        generated_ids = self.model.generate(
+            **inputs,
+            max_new_tokens=self.options["max_new_tokens"],
+            do_sample=self.options["do_sample"],
+        )
         output_ids = [row[len(input_ids):] for input_ids, row in zip(inputs.input_ids, generated_ids)]
         return self.processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
 
@@ -190,19 +213,20 @@ def report_row(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument("--config", default=PROJECT_ROOT / "config" / "default.yaml")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     paths = config["paths"]
     options = config["multimodal"]
+    os.environ["HF_HOME"] = options["model_cache_path"]
     metadata = pd.read_csv(paths["metadata"], encoding="utf-8")
     raw_documents = Path(paths["raw_documents"])
     if args.limit is not None:
         metadata = metadata.head(args.limit)
 
-    extractor = MultimodalExtractor(options["model"], options["layout_row_gap_multiplier"])
+    extractor = MultimodalExtractor(options)
     records: list[dict] = []
     report: list[dict] = []
 
@@ -223,7 +247,11 @@ def main() -> None:
 
         seen_hashes: set[str] = set()
         try:
-            images = document_images(file_path, options["min_pdf_text_length"])
+            images = document_images(
+                file_path,
+                options["min_pdf_text_length"],
+                options["pdf_render_scale"],
+            )
         except Exception as error:
             report.append(
                 {

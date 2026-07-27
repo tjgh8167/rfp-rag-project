@@ -128,7 +128,13 @@ def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[li
             continue
         if width < ocr_config["min_width"] or height < ocr_config["min_height"]:
             continue
-        if not is_table_image(image["image_bytes"]):
+        if not is_table_image(
+            image["image_bytes"],
+            dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
+            line_density=ocr_config["table_line_density"],
+            min_line_run_length=ocr_config["table_min_line_run_length"],
+            min_grid_lines=ocr_config["table_grid_min_lines"],
+        ):
             continue
 
         table_markdown = extract_image_table_markdown(
@@ -137,6 +143,10 @@ def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[li
             page_seg_mode=ocr_config["cell_psm"],
             image_scale=ocr_config["image_scale"],
             line_density=ocr_config["table_line_density"],
+            dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
+            min_line_run_length=ocr_config["table_min_line_run_length"],
+            min_grid_lines=ocr_config["table_cell_grid_min_lines"],
+            cell_crop_margin=ocr_config["table_cell_crop_margin"],
             min_cell_width=ocr_config["min_cell_width"],
             min_cell_height=ocr_config["min_cell_height"],
         )

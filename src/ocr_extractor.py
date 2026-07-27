@@ -90,8 +90,8 @@ def extract_ocr_text(
     image_bytes: bytes,
     language: str,
     *,
-    page_seg_mode: int = 6,
-    image_scale: int = 1,
+    page_seg_mode: int,
+    image_scale: int,
 ) -> str:
     import pytesseract
     from PIL import Image, ImageOps

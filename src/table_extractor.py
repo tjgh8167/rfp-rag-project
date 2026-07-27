@@ -47,16 +47,23 @@ def table_rows_to_markdown(rows: list[list[str | None]]) -> str:
     lines.extend(f"| {' | '.join(row)} |" for row in normalized_rows[1:])
     return "\n".join(lines)
 
-def _count_line_runs(mask) -> int:
+def _count_line_runs(mask, min_line_run_length: int) -> int:
     import numpy as np
 
     padded = np.concatenate(([False], mask, [False]))
     starts = np.flatnonzero(~padded[:-1] & padded[1:])
     ends = np.flatnonzero(padded[:-1] & ~padded[1:])
-    return int((ends - starts >= 2).sum())
+    return int((ends - starts >= min_line_run_length).sum())
 
 
-def is_table_image(image_bytes: bytes) -> bool:
+def is_table_image(
+    image_bytes: bytes,
+    *,
+    dark_pixel_threshold: int,
+    line_density: float,
+    min_line_run_length: int,
+    min_grid_lines: int,
+) -> bool:
     import numpy as np
     from PIL import Image, UnidentifiedImageError
 
@@ -66,18 +73,29 @@ def is_table_image(image_bytes: bytes) -> bool:
     except UnidentifiedImageError:
         return False
 
-    dark_pixels = gray < 80
-    horizontal_lines = _count_line_runs(dark_pixels.mean(axis=1) > 0.70)
-    vertical_lines = _count_line_runs(dark_pixels.mean(axis=0) > 0.70)
-    return horizontal_lines >= 2 and vertical_lines >= 2
+    dark_pixels = gray < dark_pixel_threshold
+    horizontal_lines = _count_line_runs(
+        dark_pixels.mean(axis=1) > line_density,
+        min_line_run_length,
+    )
+    vertical_lines = _count_line_runs(
+        dark_pixels.mean(axis=0) > line_density,
+        min_line_run_length,
+    )
+    return horizontal_lines >= min_grid_lines and vertical_lines >= min_grid_lines
 
-def _line_centers(mask) -> list[int]:
+
+def _line_centers(mask, min_line_run_length: int) -> list[int]:
     import numpy as np
 
     padded = np.concatenate(([False], mask, [False]))
     starts = np.flatnonzero(~padded[:-1] & padded[1:])
     ends = np.flatnonzero(padded[:-1] & ~padded[1:])
-    return [int((start + end - 1) / 2) for start, end in zip(starts, ends) if end - start >= 2]
+    return [
+        int((start + end - 1) / 2)
+        for start, end in zip(starts, ends)
+        if end - start >= min_line_run_length
+    ]
 
 
 def extract_image_table_markdown(
@@ -87,6 +105,10 @@ def extract_image_table_markdown(
     page_seg_mode: int,
     image_scale: int,
     line_density: float,
+    dark_pixel_threshold: int,
+    min_line_run_length: int,
+    min_grid_lines: int,
+    cell_crop_margin: int,
     min_cell_width: int,
     min_cell_height: int,
 ) -> str:
@@ -97,10 +119,16 @@ def extract_image_table_markdown(
     with Image.open(io.BytesIO(image_bytes)) as image:
         prepared = ImageOps.autocontrast(image.convert("L"))
         pixels = np.asarray(prepared)
-        dark_pixels = pixels < 80
-        horizontal = _line_centers(dark_pixels.mean(axis=1) > line_density)
-        vertical = _line_centers(dark_pixels.mean(axis=0) > line_density)
-        if len(horizontal) < 3 or len(vertical) < 3:
+        dark_pixels = pixels < dark_pixel_threshold
+        horizontal = _line_centers(
+            dark_pixels.mean(axis=1) > line_density,
+            min_line_run_length,
+        )
+        vertical = _line_centers(
+            dark_pixels.mean(axis=0) > line_density,
+            min_line_run_length,
+        )
+        if len(horizontal) < min_grid_lines or len(vertical) < min_grid_lines:
             return ""
 
         rows = []
@@ -110,7 +138,9 @@ def extract_image_table_markdown(
                 if right - left <= min_cell_width or bottom - top <= min_cell_height:
                     row.append("")
                     continue
-                cell = prepared.crop((left + 1, top + 1, right, bottom))
+                cell = prepared.crop(
+                    (left + cell_crop_margin, top + cell_crop_margin, right, bottom)
+                )
                 if image_scale > 1:
                     cell = cell.resize(
                         (cell.width * image_scale, cell.height * image_scale),
@@ -125,7 +155,6 @@ def extract_image_table_markdown(
                 )
             rows.append(row)
     return table_rows_to_markdown(rows)
-
 
 def extract_table_ocr(
     image_bytes: bytes,
