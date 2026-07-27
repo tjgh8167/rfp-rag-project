@@ -57,13 +57,13 @@ def build_history_messages(history: list[dict] | None, max_turns: int) -> list:
     return messages
 
 
-def build_llm(config: dict = None):
+def build_llm(config: dict):
     """설정에 맞는 ChatOpenAI 인스턴스를 생성한다. generate_answer와 condense_question이 공유해서 쓴다."""
-    gen_config = config.get("generation", {}) if config else {}
-    model_name = gen_config.get("model", "gpt-5-nano")
-    temperature = gen_config.get("temperature", 0.1)
-    top_p = gen_config.get("top_p", 0.95)
-    max_tokens = gen_config.get("max_tokens", 3000)
+    gen_config = config["generation"]
+    model_name = gen_config["model"]
+    temperature = gen_config["temperature"]
+    top_p = gen_config["top_p"]
+    max_tokens = gen_config["max_tokens"]
 
     # gpt-5/o-시리즈(reasoning 모델)는 temperature/top_p가 1로 고정되어 있어
     # 커스텀 값을 보내면 400 Unsupported parameter 에러가 발생한다.
@@ -77,15 +77,14 @@ def build_llm(config: dict = None):
     return ChatOpenAI(**llm_kwargs)
 
 
-def condense_question(question: str, history: list[dict] | None, config: dict = None) -> str:
+def condense_question(question: str, history: list[dict] | None, config: dict) -> str:
     """후속 질문을 이전 대화 맥락(기관/사업명 등)을 반영한 독립 질문으로 재구성한다.
     검색(retrieval) 단계에서 이 질문을 사용해야 후속 질문도 올바른 문서를 찾는다."""
     if not history:
         return question
     
-    gen_config = config.get("generation", {}) if config else {}
-    history_config = gen_config.get("history", {})
-    max_turns = history_config.get("max_turns", 3)
+    gen_config = config["generation"]
+    max_turns = gen_config["history"]["max_turns"]
     recent_history = history[-max_turns:] if max_turns > 0 else []
 
     if not recent_history:
@@ -110,7 +109,7 @@ def condense_question(question: str, history: list[dict] | None, config: dict = 
 def generate_answer(
     question: str,
     results: list[SearchResult],
-    config: dict = None,
+    config: dict,
     history: list[dict] = None,
 ) -> dict:
     if not results:
@@ -119,9 +118,8 @@ def generate_answer(
             "sources": [],
         }
 
-    gen_config = config.get("generation", {}) if config else {}
-    history_config = gen_config.get("history", {})
-    max_turns = history_config.get("max_turns", 3)
+    gen_config = config["generation"]
+    max_turns = gen_config["history"]["max_turns"]
 
     llm = build_llm(config)
 
