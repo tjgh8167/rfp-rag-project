@@ -272,6 +272,12 @@ python api_main.py --interactive
 6. MMR, Hybrid Search, Re-ranking을 추가 실험합니다.
 7. 검색 품질, 답변 품질, 응답 속도, 비용을 종합해 최종 조합을 선정합니다.
 
+### 공통 평가 질문
+
+공통 질문은 data/evaluation/questions.jsonl에서 관리합니다. 실제 RFP 근거를 바탕으로 단일 문서, 표 기반, 숫자 계산, 다문서 비교, 후속 질문, 문서 근거 없음 질문을 포함합니다.
+
+OpenAI와 Local Retriever가 완성된 뒤 notebook/04_evaluation.ipynb에서 같은 질문 세트를 각각 실행합니다. 실행 결과는 Google Sheets에 질문 ID, 설정값, 검색 문서, 최종 답변, 응답 시간을 동일하게 기록해 비교합니다.
+
 ## 9. 주요 설정
 
 공통 설정은 `config/default.yaml`에서 관리합니다.
