@@ -58,7 +58,7 @@ class OpenAIChromaRetriever:
         active_filters = filters or {}
 
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
-        fetch_k = max(search_k * 10, self.fetch_k_base) # fetch_k_base는 yaml에서 설정한 값
+        fetch_k = self.fetch_k_base 
 
         # Search_methood 조건별 작동 로직
         try: 
