@@ -98,7 +98,9 @@ def build_llm(config: dict):
     # 해당 모델일 땐 두 파라미터를 빼고, 그 외 모델(gpt-4o 등)일 땐 YAML 값을 그대로 적용한다.
     is_reasoning_model = model_name.startswith(("gpt-5", "o1", "o3", "o4"))
     llm_kwargs = {"model": model_name, "max_tokens": max_tokens}
-    if not is_reasoning_model:
+    if is_reasoning_model:
+        llm_kwargs["reasoning_effort"] = gen_config["reasoning_effort"]  # 추가
+    else:
         llm_kwargs["temperature"] = temperature
         llm_kwargs["top_p"] = top_p
 

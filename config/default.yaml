@@ -6,6 +6,10 @@ paths:
   extraction_failures: /data/processed/extraction_failures.csv
   ocr_documents: /data/processed/ocr_documents.jsonl
   ocr_report: /data/processed/ocr_report.csv
+  table_documents: /data/processed/table_documents.jsonl
+  table_report: /data/processed/table_report.csv
+  multimodal_documents: /data/processed/multimodal_documents.jsonl
+  multimodal_report: /data/processed/multimodal_report.csv
 
 chunking:
   chunk_size: 800
@@ -13,6 +17,19 @@ chunking:
 
 ocr:
   language: kor+eng
+  python_path: ~/venvs/sprint-ai-ocr/bin/python
+  general_psm: 6
+  table_psm: 11
+  cell_psm: 6
+  table_line_density: 0.70
+  table_dark_pixel_threshold: 80
+  table_min_line_run_length: 2
+  table_grid_min_lines: 2
+  table_cell_grid_min_lines: 3
+  table_cell_crop_margin: 1
+  min_cell_width: 20
+  min_cell_height: 20
+  image_scale: 2
   min_width: 200
   min_height: 100
   min_text_length: 2
@@ -20,17 +37,18 @@ ocr:
 retrieval:
   active_profile: baseline
   top_k: 5 # fetch_k 적용으로 실제 검색 시 가져올 상위 결과 수 조정 (3 -> 5)
-  search_method: similarity
+  search_method: mmr # similarity, mmr, hybrid(사용 불가)
   profiles:
     baseline:
       provider: lexical
     openai:
       provider: openai
-      embedding_model: text-embedding-3-small # 0714 정서호
+      embedding_model: text-embedding-3-small # text-embedding-3-small(선택), text-embedding-3-large / 0714 정서호
       vector_db: chroma
       persist_directory: /data/processed/vector_db/openai # VM 경로로 저장 
       collection_name: bidmate_openai
       fetch_k: 100   # 부분 일치 검색 활용 / 100개 이상은 속도 저하, 노이즈 유입 가능성
+      lambda_mult: 0.7 # MMR 변수 / 0.0에 가까울수록 다양성 중시, 1.0에 가까울수록 관련성 중시 / 0724 정서호
       batch_size: 1000 # vector DB에 데이터를 넣을 때 한 번에 처리할 데이터 수
     local:
       provider: huggingface
@@ -41,10 +59,11 @@ retrieval:
 
 generation:
   provider: openai
-  model: gpt-5-nano
+  model: gpt-5-nano          # gpt-5-mini -> gpt-5-nano
   temperature: 0.1
   top_p: 0.95
-  max_tokens: 3000
+  max_tokens: 4500           # 3000 -> 4500
+  reasoning_effort: low      # 추가
   history:
     max_turns: 3
 
@@ -53,3 +72,27 @@ experiments:
     - mmr
     - hybrid
     - rerank
+
+multimodal:
+  # 라이브러리는 개인 가상환경, 모델은 /data/model_cache/huggingface 공용 캐시 사용
+  model: Qwen/Qwen2.5-VL-3B-Instruct
+  min_width: 200
+  min_height: 100
+  min_pdf_text_length: 20
+  min_vlm_width: 500
+  min_vlm_height: 200
+  layout_row_gap_multiplier: 1.5
+  model_cache_path: /data/model_cache/huggingface
+  python_path: ~/venvs/sprint-ai-multimodal/bin/python  # paddleocr + transformers 모두 필요
+  pdf_render_scale: 2
+  paddle_language: korean
+  paddle_ocr_version: PP-OCRv5
+  paddle_device: cpu
+  paddle_use_doc_orientation_classify: false
+  paddle_use_doc_unwarping: false
+  paddle_use_textline_orientation: false
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: bfloat16
+  device_map: auto
+  max_new_tokens: 180
+  do_sample: false
