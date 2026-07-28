@@ -24,6 +24,7 @@ def normalize_characters(text: str) -> tuple[str, dict]:
     at_line_start = True
 
     for character in text:
+        # 줄바꿈과 탭도 제어문자(Cc)라서 아래 C 카테고리 삭제보다 먼저 처리해야 한다.
         if character in {"\n", "\t"}:
             result.append(character)
             at_line_start = character == "\n"
@@ -75,11 +76,12 @@ def collapse_whitespace(text: str, max_blank_lines: int) -> tuple[str, dict]:
 
 # 바로 뒤에 똑같이 반복되는 문단을 제거합니다.
 # 표의 같은 값이 여러 행에 나뉘어 반복되는 경우를 지우지 않도록 연속된 중복만 대상으로 합니다.
+# 길이는 서식용 정렬 공백을 뺀 실제 내용 기준으로 재서, 공백이 많은 줄이 문턱을 넘지 않게 합니다.
 def remove_repeated_paragraphs(text: str, min_length: int) -> tuple[str, dict]:
     kept = []
     removed_lines = []
     for line in text.split("\n"):
-        if kept and line == kept[-1] and len(line.strip()) >= min_length:
+        if kept and line == kept[-1] and len(" ".join(line.split())) >= min_length:
             removed_lines.append(line)
             continue
         kept.append(line)

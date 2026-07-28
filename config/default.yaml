@@ -11,7 +11,7 @@ paths:
 
 cleaning:
   max_blank_lines: 1            # 연속으로 허용할 빈 줄 수
-  min_duplicate_paragraph_length: 20  # 연속 중복 제거 대상이 되는 최소 문단 길이
+  min_duplicate_paragraph_length: 8   # 연속 중복 제거 대상이 되는 최소 내용 길이(정렬 공백 제외)
   requirement_id_pattern: "[A-Z]{2,4}-[0-9]{3,4}"  # 보존 검증에 쓰는 요구사항 번호 형식
 
 chunking:
