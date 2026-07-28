@@ -28,4 +28,4 @@ chroma_db/
 
 # 개인 실험
 data/evaluation/results_openai.csv
-src/openai_chroma_retriever.py
+notebook/04_evaluation.ipynb
