@@ -44,6 +44,34 @@ def extract_images(file_path: Path) -> list[dict]:
     raise ValueError(f"Unsupported file type: {file_path.suffix}")
 
 
+# 표로 처리하지 않고 건너뛴 이미지도 사유를 남겨야 전체 이미지 수가 리포트에서 맞는다.
+def skipped_image_row(
+    doc_id: str,
+    file_name: str,
+    file_type: str,
+    image: dict,
+    reason: str,
+    width: int,
+    height: int,
+    status: str = "excluded",
+) -> dict:
+    return {
+        "doc_id": doc_id,
+        "file_name": file_name,
+        "file_type": file_type,
+        "source_type": "table_image",
+        "page_number": image.get("page_number"),
+        "image_number": image.get("image_number"),
+        "table_number": None,
+        "status": status,
+        "reason": reason,
+        "width": width,
+        "height": height,
+        "text_length": 0,
+        "extraction_method": "",
+    }
+
+
 def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[list[dict], list[dict]]:
     file_name = file_path.name
     file_type = file_path.suffix.lower().lstrip(".")
@@ -127,34 +155,68 @@ def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[li
             )
             continue
         if width < ocr_config["min_width"] or height < ocr_config["min_height"]:
+            report_rows.append(
+                skipped_image_row(
+                    doc_id, file_name, file_type, image, "image_too_small", width, height
+                )
+            )
             continue
-        if not is_table_image(
-            image["image_bytes"],
-            dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
-            line_density=ocr_config["table_line_density"],
-            min_line_run_length=ocr_config["table_min_line_run_length"],
-            min_grid_lines=ocr_config["table_grid_min_lines"],
-        ):
-            continue
+        # 픽셀을 읽는 단계라 크기 확인을 통과한 이미지도 깨져 있을 수 있다.
+        # 한 장 때문에 100건 실행이 중단되지 않도록 사유를 남기고 넘어간다.
+        try:
+            table_like = is_table_image(
+                image["image_bytes"],
+                dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
+                line_density=ocr_config["table_line_density"],
+                min_line_run_length=ocr_config["table_min_line_run_length"],
+                min_grid_lines=ocr_config["table_grid_min_lines"],
+            )
+            if not table_like:
+                report_rows.append(
+                    skipped_image_row(
+                        doc_id, file_name, file_type, image, "not_table_image", width, height
+                    )
+                )
+                continue
 
-        table_markdown = extract_image_table_markdown(
-            image["image_bytes"],
-            ocr_config["language"],
-            page_seg_mode=ocr_config["cell_psm"],
-            image_scale=ocr_config["image_scale"],
-            line_density=ocr_config["table_line_density"],
-            dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
-            min_line_run_length=ocr_config["table_min_line_run_length"],
-            min_grid_lines=ocr_config["table_cell_grid_min_lines"],
-            cell_crop_margin=ocr_config["table_cell_crop_margin"],
-            min_cell_width=ocr_config["min_cell_width"],
-            min_cell_height=ocr_config["min_cell_height"],
-        )
-        text = table_markdown or extract_table_ocr(
-            image["image_bytes"],
-            ocr_config["language"],
-            ocr_config["table_psm"],
-            ocr_config["image_scale"],
+            table_markdown = extract_image_table_markdown(
+                image["image_bytes"],
+                ocr_config["language"],
+                page_seg_mode=ocr_config["cell_psm"],
+                image_scale=ocr_config["image_scale"],
+                line_density=ocr_config["table_line_density"],
+                dark_pixel_threshold=ocr_config["table_dark_pixel_threshold"],
+                min_line_run_length=ocr_config["table_min_line_run_length"],
+                min_grid_lines=ocr_config["table_cell_grid_min_lines"],
+                cell_crop_margin=ocr_config["table_cell_crop_margin"],
+                min_cell_width=ocr_config["min_cell_width"],
+                min_cell_height=ocr_config["min_cell_height"],
+            )
+            text = table_markdown or extract_table_ocr(
+                image["image_bytes"],
+                ocr_config["language"],
+                ocr_config["table_psm"],
+                ocr_config["image_scale"],
+            )
+        except Exception as error:
+            report_rows.append(
+                skipped_image_row(
+                    doc_id,
+                    file_name,
+                    file_type,
+                    image,
+                    f"{type(error).__name__}: {error}",
+                    width,
+                    height,
+                    status="failed",
+                )
+            )
+            continue
+        # 레코드와 리포트가 같은 값을 쓰도록 한 곳에서만 정한다.
+        extraction_method = (
+            f"cell_ocr_psm_{ocr_config['cell_psm']}"
+            if table_markdown
+            else f"tesseract_psm_{ocr_config['table_psm']}"
         )
         status = "review_required" if len(text) >= ocr_config["min_text_length"] else "excluded"
         reason = "table_ocr_requires_review" if status == "review_required" else "ocr_text_too_short"
@@ -169,7 +231,7 @@ def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[li
             "table_markdown": table_markdown,
             "table_ocr_text": text if not table_markdown else "",
             "text_sha256": sha256_text(text) if text else "",
-            "extraction_method": "cell_ocr_psm_" + str(ocr_config["cell_psm"]) if table_markdown else f"tesseract_psm_{ocr_config['table_psm']}",
+            "extraction_method": extraction_method,
         }
         if status == "review_required":
             records.append(record)
@@ -187,7 +249,7 @@ def process_document(file_path: Path, doc_id: str, ocr_config: dict) -> tuple[li
                 "width": width,
                 "height": height,
                 "text_length": len(text),
-                "extraction_method": f"tesseract_psm_{ocr_config['table_psm']}",
+                "extraction_method": extraction_method,
             }
         )
 
