@@ -13,7 +13,7 @@ class OpenAIChromaRetriever:
         self.config = config
 
         # retrieval 설정
-        retrieval_config = self.config["retrieval"]
+        retrieval_config = self.config
         openai_config = retrieval_config["profiles"]["openai"]
         
         embedding_model = openai_config["embedding_model"]
@@ -58,14 +58,24 @@ class OpenAIChromaRetriever:
         active_filters = filters or {}
 
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
-        fetch_k = self.fetch_k_base 
+        total_chunks = self.vectorstore._collection.count() # 벡터 DB 전체 청크 수 확인
+        if total_chunks == 0:                               # 청크가 없다면 
+            print("안내: VectorDB에 저장된 문서(청크)가 없습니다.")
+            return []                                       
+
+        fetch_k = min(self.fetch_k_base, total_chunks) # fetch_k가 전체 청크 수를 넘지않도록
+        search_k = min(search_k, total_chunks)         # search_k가 전체 청크 수를 넘지않도록
 
         # Search_methood 조건별 작동 로직
         try: 
-            if self.search_method == "mmr":
+            # Search_method 명시적 분기 및 예외 처리
+            if self.search_method.lower() == "mmr":
                 # MMR 검색 (다양성 고려)
                 mmr_k = search_k
-                mmr_fetch = fetch_k * 2 if active_filters else fetch_k
+                
+                # active_filters가 있을 때 fetch_k를 2배로 늘리더라도 총 청크수를 넘지 않게 재조정
+                target_fetch = fetch_k * 2 if active_filters else fetch_k
+                mmr_fetch = min(target_fetch, total_chunks) 
                 
                 docs = self.vectorstore.max_marginal_relevance_search(
                     query=query,
@@ -74,18 +84,23 @@ class OpenAIChromaRetriever:
                     lambda_mult=self.lambda_mult,
                     filter=None
                 )
-                # Langchain의 MMR은 유사도 점수를 반환하지 않으므로 구조 통일을 위해 0.0으로 처리 (하드 코딩 X)
+                # Langchain의 MMR은 유사도 점수를 반환하지 않으므로 구조 통일을 위해 0.0으로 처리
                 docs_and_scores = [(doc, 0.0) for doc in docs]
-            else:
-                # 유사도 기반 검색 시 필터(--filters{})가 있으면  fetch_k + top_k 사용 / 없다면 top_k만 사용 -> 최적화
+
+            elif self.search_method.lower() == "similarity":
+                # 유사도 기반 검색 시 필터(--filters{})가 있으면 fetch_k 사용 / 없다면 search_k 사용
                 search_limit = fetch_k if active_filters else search_k
 
                 # 유사도 점수
                 docs_and_scores = self.vectorstore.similarity_search_with_relevance_scores(
                     query=query,
                     k=search_limit,
-                    filter= None
+                    filter=None
                 )
+            
+            else:
+                # yaml 파일에 오타가 났거나 지원하지 않는 방식일 경우 강제 에러 발생
+                raise ValueError(f"[오류] 지원하지 않는 search_method 입니다")
 
         except Exception as e:       # ChromaDB에서 필터 조건이 잘못되었거나, 검색 중 오류가 발생하면 예외를 발생시켜 호출자에게 알림
             raise
@@ -113,11 +128,11 @@ class OpenAIChromaRetriever:
             if is_match:
                 results.append(
                     SearchResult(
-                    chunk_id=doc.metadata.get("chunk_id", ""),
-                    doc_id=doc.metadata.get("doc_id", ""),
-                    text=doc.page_content,
-                    metadata=doc.metadata,
-                    score=float(score)
+                        chunk_id=doc.metadata.get("chunk_id", ""),
+                        doc_id=doc.metadata.get("doc_id", ""),
+                        text=doc.page_content,
+                        metadata=doc.metadata,
+                        score=float(score)
                     )
                 )
 
