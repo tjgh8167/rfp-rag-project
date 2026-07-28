@@ -92,6 +92,8 @@ def process_document(
     min_width: int,
     min_height: int,
     min_text_length: int,
+    general_psm: int,
+    image_scale: int,
 ) -> tuple[list[dict], list[dict]]:
     records = []
     report_rows = []
@@ -116,7 +118,12 @@ def process_document(
                 )
                 continue
 
-            ocr_text = extract_ocr_text(image["image_bytes"], language)
+            ocr_text = extract_ocr_text(
+                image["image_bytes"],
+                language,
+                page_seg_mode=general_psm,
+                image_scale=image_scale,
+            )
             if len(ocr_text) < min_text_length:
                 report_rows.append(
                     build_report_row(
@@ -220,6 +227,8 @@ def main() -> None:
                 min_width=ocr_config["min_width"],
                 min_height=ocr_config["min_height"],
                 min_text_length=ocr_config["min_text_length"],
+                general_psm=ocr_config["general_psm"],
+                image_scale=ocr_config["image_scale"],
             )
             all_records.extend(records)
             all_report_rows.extend(report_rows)

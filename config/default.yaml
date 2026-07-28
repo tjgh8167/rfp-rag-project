@@ -6,6 +6,10 @@ paths:
   extraction_failures: /data/processed/extraction_failures.csv
   ocr_documents: /data/processed/ocr_documents.jsonl
   ocr_report: /data/processed/ocr_report.csv
+  table_documents: /data/processed/table_documents.jsonl
+  table_report: /data/processed/table_report.csv
+  multimodal_documents: /data/processed/multimodal_documents.jsonl
+  multimodal_report: /data/processed/multimodal_report.csv
 
 chunking:
   chunk_size: 800
@@ -13,6 +17,19 @@ chunking:
 
 ocr:
   language: kor+eng
+  python_path: ~/venvs/sprint-ai-ocr/bin/python
+  general_psm: 6
+  table_psm: 11
+  cell_psm: 6
+  table_line_density: 0.70
+  table_dark_pixel_threshold: 80
+  table_min_line_run_length: 2
+  table_grid_min_lines: 2
+  table_cell_grid_min_lines: 3
+  table_cell_crop_margin: 1
+  min_cell_width: 20
+  min_cell_height: 20
+  image_scale: 2
   min_width: 200
   min_height: 100
   min_text_length: 2
@@ -54,3 +71,27 @@ experiments:
     - mmr
     - hybrid
     - rerank
+
+multimodal:
+  # 라이브러리는 개인 가상환경, 모델은 /data/model_cache/huggingface 공용 캐시 사용
+  model: Qwen/Qwen2.5-VL-3B-Instruct
+  min_width: 200
+  min_height: 100
+  min_pdf_text_length: 20
+  min_vlm_width: 500
+  min_vlm_height: 200
+  layout_row_gap_multiplier: 1.5
+  model_cache_path: /data/model_cache/huggingface
+  python_path: ~/venvs/sprint-ai-multimodal/bin/python  # paddleocr + transformers 모두 필요
+  pdf_render_scale: 2
+  paddle_language: korean
+  paddle_ocr_version: PP-OCRv5
+  paddle_device: cpu
+  paddle_use_doc_orientation_classify: false
+  paddle_use_doc_unwarping: false
+  paddle_use_textline_orientation: false
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: bfloat16
+  device_map: auto
+  max_new_tokens: 180
+  do_sample: false
