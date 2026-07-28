@@ -10,10 +10,12 @@ class OpenAIChromaRetriever:
 
     def __init__(self, config: dict):
         load_dotenv()  # 환경변수(.env)에서 OPENAI_API_KEY 로드
-        self.config = config
 
-        # retrieval 설정
-        retrieval_config = self.config["retrieval"]
+        self.config = config
+        if "retrieval" in self.config:
+            retrieval_config = self.config["retrieval"]
+        else:
+            retrieval_config = self.config
         openai_config = retrieval_config["profiles"]["openai"]
         
         embedding_model = openai_config["embedding_model"]
