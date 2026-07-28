@@ -13,7 +13,7 @@ class OpenAIChromaRetriever:
         self.config = config
 
         # retrieval 설정
-        retrieval_config = self.config
+        retrieval_config = self.config["retrieval"]
         openai_config = retrieval_config["profiles"]["openai"]
         
         embedding_model = openai_config["embedding_model"]
