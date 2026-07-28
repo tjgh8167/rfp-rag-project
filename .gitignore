@@ -25,3 +25,7 @@ chroma_db/
 # OS / editor
 .DS_Store
 .vscode/
+
+# 개인 실험
+data/evaluation/results_openai.csv
+notebook/04_evaluation.ipynb

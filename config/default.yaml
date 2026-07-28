@@ -20,17 +20,18 @@ ocr:
 retrieval:
   active_profile: baseline
   top_k: 5 # fetch_k 적용으로 실제 검색 시 가져올 상위 결과 수 조정 (3 -> 5)
-  search_method: similarity
+  search_method: mmr # similarity, mmr, hybrid(사용 불가)
   profiles:
     baseline:
       provider: lexical
     openai:
       provider: openai
-      embedding_model: text-embedding-3-small # 0714 정서호
+      embedding_model: text-embedding-3-small # text-embedding-3-small(선택), text-embedding-3-large / 0714 정서호
       vector_db: chroma
       persist_directory: /data/processed/vector_db/openai # VM 경로로 저장 
       collection_name: bidmate_openai
       fetch_k: 100   # 부분 일치 검색 활용 / 100개 이상은 속도 저하, 노이즈 유입 가능성
+      lambda_mult: 0.7 # MMR 변수 / 0.0에 가까울수록 다양성 중시, 1.0에 가까울수록 관련성 중시 / 0724 정서호
       batch_size: 1000 # vector DB에 데이터를 넣을 때 한 번에 처리할 데이터 수
     local:
       provider: huggingface
