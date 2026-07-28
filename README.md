@@ -113,6 +113,7 @@ RFP 문서 → 파싱·청킹 → chunks_800_120.jsonl → 임베딩·Chroma 검
 | 추출 방식 | 채택 여부 | 근거 |
 | :--- | :--- | :--- |
 | PDF 텍스트 레이어 표(PyMuPDF `find_tables`) | 채택 | 행·열 구조가 그대로 보존됨 |
+| HWP 본문 표(레코드 직접 파싱) | 채택 | 파일에 저장된 셀 좌표를 읽으므로 오독이 없음. 문서 96개에서 표 11,930개를 실패 없이 복원 |
 | PaddleOCR 텍스트 + 좌표 기반 `spatial_layout` | 채택 | 좌표 계산 결과라 환각이 없음. 단 `spatial_layout`은 화살표 흐름이 아니라 이미지 안의 공간 배치임 |
 | 이미지 추출(OpenAI `openai_only`) | 채택 | 유형 판정 93%, 키워드 85%로 세 방식 중 가장 정확. 숫자 오독이 있어 검토는 유지 |
 | VLM(Qwen2.5-VL) 개요 | 미채택 | 유형 판정 57%. 전면 검정 이미지를 diagram으로 판정하고 큰 이미지에서 메모리 부족으로 중단됨 |
@@ -130,7 +131,9 @@ RFP 문서 → 파싱·청킹 → chunks_800_120.jsonl → 임베딩·Chroma 검
 
 비교 모델은 gpt-5-nano가 4.5배 저렴하지만 오독과 환각이 확인되어 gpt-5-mini를 사용합니다. 182장 기준 비용 차이가 $0.24 수준이라 이 규모에서는 정확도를 우선했습니다.
 
-표는 파일에 글자로 저장돼 있으면 이미지 경로를 쓰지 않습니다. PDF 표는 `pymupdf_find_tables`로 셀 좌표를 그대로 읽고, 이미지 경로는 다른 방법이 없을 때만 사용합니다.
+표는 파일에 글자로 저장돼 있으면 이미지 경로를 쓰지 않습니다. PDF 표는 `pymupdf_find_tables`, HWP 본문 표는 레코드 직접 파싱으로 셀 좌표를 그대로 읽고, 이미지 경로는 그림으로만 존재해 다른 방법이 없을 때만 사용합니다.
+
+세 방식은 접근 가능한 대상이 달라 같은 표본으로 비교할 수 없습니다. 표 구조 보존율은 `openai_only` 5/7, PyMuPDF 698/740(94%), HWP 직접 파싱 11,930건 전부이며, `openai_only`에서는 `6.25 명`을 `62.5일`로 읽는 숫자 오독이 확인되었습니다. 파서가 접근할 수 있는 표에 이미지 경로를 쓰지 않는 이유입니다.
 
 실험 과정과 수치는 `docs/experiment_log_image_extraction.md`, 원본 대조는 `notebook/07_vision_model_comparison.ipynb`, `notebook/08_extraction_path_comparison.ipynb`에 있습니다.
 
@@ -193,6 +196,7 @@ sprint-ai-mid-project_team3/
 ├── scripts/
 │   ├── build_chunks.py                # 실제 PDF/HWP -> 공통 chunks JSONL
 │   ├── build_metadata.py              # 원본 CSV -> 표준 metadata.csv·청크 metadata 보강
+│   ├── build_hwp_tables.py            # HWP 본문 표 -> hwp_table_documents.jsonl
 │   ├── validate_chunk_contract.py     # 청크·SearchResult 공통 계약 검증
 │   └── build_api_vectordb.py          # OpenAI 임베딩 -> OpenAI Chroma DB
 ├── src/
@@ -354,6 +358,7 @@ OpenAI와 Local Retriever가 완성된 뒤 notebook/04_evaluation.ipynb에서 �
 - `retrieval.profiles.*.persist_directory`, `collection_name`: Retriever별 공유 Chroma DB 저장 위치와 컬렉션 이름
 - `generation.provider`, `generation.model`: Generation 담당자가 선정한 LLM
 - `multimodal.extraction_mode`: `paddle_qwen`, `paddle_openai`, `openai_only` 중 선택
+- `hwp_table.min_rows`, `min_columns`, `min_density`: HWP 표를 내용으로 볼지 판단하는 기준
 - `multimodal.openai_model`, `openai_max_output_tokens`, `openai_reasoning_effort`, `openai_image_detail`: OpenAI 비전 호출 옵션
 
 모델명과 실험값은 코드에 직접 적지 않고 설정 파일과 실험 기록에 남깁니다.
