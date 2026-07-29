@@ -10,14 +10,18 @@ class OpenAIChromaRetriever:
 
     def __init__(self, config: dict):
         load_dotenv()  # 환경변수(.env)에서 OPENAI_API_KEY 로드
-
         self.config = config
-        if "retrieval" in self.config:
-            retrieval_config = self.config["retrieval"]
-        else:
-            retrieval_config = self.config
 
-        openai_config = retrieval_config["profiles"]["openai"]
+        if "retrieval" in config:
+            self.retrieval_config = config["retrieval"]
+        else:
+            self.retrieval_config = config
+
+        self.rerank_config = self.retrieval_config["rerank"]
+        self.use_rerank = self.retrieval_config["use_rerank"]
+        self.rerank_final_top_k = self.rerank_config["final_top_k"]
+
+        openai_config = self.retrieval_config["profiles"]["openai"]
         
         embedding_model = openai_config["embedding_model"]
         persist_directory = openai_config["persist_directory"]
@@ -27,13 +31,13 @@ class OpenAIChromaRetriever:
         self.embeddings = OpenAIEmbeddings(model=embedding_model)
 
         # top_k 값 설정
-        self.default_top_k = retrieval_config["top_k"]
+        self.default_top_k = self.retrieval_config["top_k"]
 
         # 검색 방식 설정
-        self.search_method = retrieval_config["search_method"]
+        self.search_method = self.retrieval_config["search_method"]
 
         # 리랭크 
-        self.use_rerank = retrieval_config["use_rerank"]
+        self.use_rerank = self.retrieval_config["use_rerank"]
 
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
         self.fetch_k_base = openai_config["fetch_k"]  # 부분 일치 검색 활용
@@ -61,13 +65,12 @@ class OpenAIChromaRetriever:
 
     def search(self, query: str, top_k: int | None = None, filters: dict | None = None, _is_hybrid_internal: bool = False, _is_rerank_internal: bool = False) -> list[SearchResult]:
 
-        # 리랭크를 사용한다면     
-        if self.use_rerank and not _is_rerank_internal:
+        if self.use_rerank and not _is_rerank_internal:  # 리랭크가 True인지 확인
             if self.reranker_engine is None:
                 from src.reranker import Reranker
                 self.reranker_engine = Reranker(self.config)
 
-            candidate_count = self.config["rerank"]["candidate_count"]
+            candidate_count = self.rerank_config["candidate_count"]
 
             # 하위 검색(하이브리드 or MMR/Similarity)을 통해 후보군 수집
             initial_results = self.search(
@@ -78,7 +81,11 @@ class OpenAIChromaRetriever:
                 _is_rerank_internal=True
             )
 
-            final_k = top_k if top_k is not None else self.default_top_k
+            # yaml에 설정된 rerank final_top_k를 우선적으로 적용
+            final_k = self.rerank_final_top_k
+            if final_k is None:
+                raise ValueError("[오류] rerank 설정에 final_top_k가 지정되지 않았습니다.")
+
             return self.reranker_engine.rerank(query, initial_results, top_k=final_k)
         
         # 하이브리드 매서드를 사용한 경우
@@ -90,7 +97,7 @@ class OpenAIChromaRetriever:
                 self.hybrid_engine = HybridRetriever(self.config, dense_retriever=self)
 
             # use_rerank = False면 순수 hybrid top_k 검색 
-            target_top_k = self.config["rerank"]["candidate_count"] if self.use_rerank else top_k
+            target_top_k = self.rerank_config["candidate_count"] if self.use_rerank else (top_k if top_k is not None else self.default_top_k)
             return self.hybrid_engine.search(query, top_k=target_top_k, filters=filters)
         
         # CLI에서 호출할때는 yaml값 그대로, 코드에서 바꾸면 인자값으로 (yaml top_k바꾸면 바뀜)
