@@ -71,12 +71,22 @@ def preservation_values(row: pd.Series) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="원본 RFP 본문을 클리닝해 JSONL로 저장")
     parser.add_argument("--config", default=PROJECT_ROOT / "config/default.yaml")
+    # 표를 표 청크로 따로 관리할 때 씁니다. 본문에 표 글자가 남으면 같은 내용이 두 벌이 됩니다.
+    parser.add_argument(
+        "--exclude-tables",
+        action="store_true",
+        help="HWP 본문에서 표 안 글자를 빼고 cleaned_documents_no_table 경로에 저장",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     metadata_path = resolve_project_path(config["paths"]["metadata"])
     raw_documents_path = resolve_project_path(config["paths"]["raw_documents"])
-    output_path = resolve_project_path(config["paths"]["cleaned_documents"])
+    output_path = resolve_project_path(
+        config["paths"]["cleaned_documents_no_table"]
+        if args.exclude_tables
+        else config["paths"]["cleaned_documents"]
+    )
     report_path = resolve_project_path(config["paths"]["cleaning_report"])
     max_blank_lines = config["cleaning"]["max_blank_lines"]
     min_duplicate_paragraph_length = config["cleaning"]["min_duplicate_paragraph_length"]
@@ -96,7 +106,11 @@ def main() -> None:
         record = {"doc_id": doc_id, "file_name": file_name, "status": "ok", "error": ""}
 
         try:
-            original_text = read_document(raw_documents_path / file_name)
+            original_text = read_document(
+                raw_documents_path / file_name,
+                exclude_tables=args.exclude_tables,
+                table_options=config["hwp_table"],
+            )
             cleaned_text, stats = clean_document_text(
                 original_text,
                 max_blank_lines=max_blank_lines,
