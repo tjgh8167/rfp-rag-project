@@ -1,12 +1,16 @@
 # src/rag_engine.py
 import os
 from dataclasses import asdict
+import ast
+import operator
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.output_parsers import StrOutputParser
+
+from langchain_core.tools import tool
 
 from src.retriever import SearchResult
 
@@ -26,11 +30,50 @@ SYSTEM_RULE = (
     "[대화 이력 처리 원칙]\n"
     "5. 이전 대화(history)가 있다면, 후속 질문에서 기관명·사업명을 다시 언급하지 않아도 직전 대화에서 다룬 기관/사업/주제를 이어받아 답변할 것.\n"
     "   단, 새 질문이 다른 기관명이나 사업명을 명확히 새로 언급하면 이전 대화 내용을 끌어오지 말고 새 질문이 가리키는 대상만을 기준으로 답변할 것.\n\n"
+    "[계산 도구 사용 원칙]\n"
+    "6. 예산, 금액, 비율(%), 증감폭, 합계 등 숫자 계산이 필요한 질문에는 반드시 calculate 도구를 호출해 계산할 것.\n"
+    "   직접 암산한 값을 답변에 사용하지 말고, 반드시 도구 호출 결과를 근거로 답변을 작성할 것.\n\n"
     "[출력 어조 규칙]\n"
     "- 모든 답변은 신뢰감을 주는 **정중한 해요체/하십시오체('~합니다', '~안내해 드립니다')** 또는 **깔끔한 명사형/개조식(~함, ~기재)** 중 하나로 일관되게 작성할 것.\n"
     "- 반말, 혼잣말, 혹은 문장이 중간에 끊기는 현상이 절대 없도록 문장 끝맺음을 완벽하게 마무리할 것."
 )
 
+# 허용된 연산자만 화이트리스트로 정의 (이 외의 모든 구문은 계산 거부)
+_ALLOWED_BINOPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+}
+_ALLOWED_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+def _safe_eval(node):
+    """AST 노드를 재귀적으로 순회하며 숫자와 사칙연산만 직접 계산한다.
+    eval과 달리 함수 호출·이름 참조 등은 노드 타입 자체가 허용 목록에 없어 실행이 불가능하다."""
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
+        return _ALLOWED_BINOPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+        return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval(node.operand))
+    raise ValueError("숫자와 사칙연산(+ - * / 괄호)만 사용할 수 있습니다")
+
+
+@tool
+def calculate(expression: str) -> str:
+    """사칙연산과 괄호로 이루어진 순수 수식을 계산합니다.
+    입력 예시: '1200000000 * 0.15', '(500-320)/320*100'.
+    단위(원, %, 개 등)나 문자 없이 숫자와 연산자(+ - * / ( ) .)만 포함해야 합니다."""
+    try:
+        # eval 대신 AST 파싱 후 허용된 노드(숫자·사칙연산)만 직접 계산해 임의 코드 실행을 원천 차단한다.
+        tree = ast.parse(expression, mode="eval")
+        result = _safe_eval(tree)
+        return str(result)
+    except ZeroDivisionError:
+        return "계산 오류: 0으로 나눌 수 없습니다"
+    except Exception as exc:
+        return f"계산 오류: {exc}"
 
 def build_context(results: list[SearchResult]) -> str:
     context_blocks = []
@@ -71,7 +114,7 @@ def build_llm(config: dict):
     is_reasoning_model = model_name.startswith(("gpt-5", "o1", "o3", "o4"))
     llm_kwargs = {"model": model_name, "max_tokens": max_tokens}
     if is_reasoning_model:
-        llm_kwargs["reasoning_effort"] = gen_config["reasoning_effort"]  # 추가
+        llm_kwargs["reasoning_effort"] = gen_config["reasoning_effort"]
     else:
         llm_kwargs["temperature"] = temperature
         llm_kwargs["top_p"] = top_p
@@ -107,6 +150,31 @@ def condense_question(question: str, history: list[dict] | None, config: dict) -
     chain = condense_prompt | llm | StrOutputParser()
     return chain.invoke({"history": history_text, "question": question}).strip()
 
+def _generate_with_tool_calling(llm, messages: list) -> str:
+    """calculate 도구를 bind한 뒤, 1) 호출 필요 여부 판단 -> 2) 실제 실행 -> 최종 답변 순서로 진행한다."""
+    llm_with_tools = llm.bind_tools([calculate])
+ 
+    # 1단계: 모델이 도구 호출이 필요한지 스스로 판단
+    ai_message = llm_with_tools.invoke(messages)
+ 
+    if not ai_message.tool_calls:
+        # 모델이 도구 없이도 답변 가능하다고 판단한 경우 (계산이 필요 없는 일반 질문)
+        return ai_message.content
+ 
+    # 2단계: 요청된 도구를 실제로 실행하고, 결과를 대화에 포함해 다시 호출
+    messages_with_tools = messages + [ai_message]
+    for tool_call in ai_message.tool_calls:
+        if tool_call["name"] == "calculate":
+            tool_result = calculate.invoke(tool_call["args"])
+        else:
+            tool_result = f"오류: 알 수 없는 도구 호출 - {tool_call['name']}"
+        messages_with_tools.append(
+            ToolMessage(content=tool_result, tool_call_id=tool_call["id"])
+        )
+ 
+    final_message = llm_with_tools.invoke(messages_with_tools)
+    return final_message.content
+
 
 def generate_answer(
     question: str,
@@ -124,22 +192,19 @@ def generate_answer(
     max_turns = gen_config["history"]["max_turns"]
 
     llm = build_llm(config)
+    context = build_context(results)
+    history_messages = build_history_messages(history, max_turns)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_RULE + "\n\nContext:\n{context}"),
         MessagesPlaceholder("history", optional=True),
         ("human", "{question}")
     ])
+    messages = prompt.format_messages(
+        context=context, question=question, history=history_messages
+    )
 
-    chain = prompt | llm | StrOutputParser()
-
-    context = build_context(results)
-    history_messages = build_history_messages(history, max_turns)
-    answer = chain.invoke({
-        "context": context,
-        "question": question,
-        "history": history_messages,
-    })
+    answer = _generate_with_tool_calling(llm, messages)
 
     return {
         "answer": answer,
