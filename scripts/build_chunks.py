@@ -1,10 +1,16 @@
 import argparse
+import json
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
-from src.parser_chunker import build_chunks, load_chunks_jsonl, save_chunks_jsonl
+from src.parser_chunker import (
+    build_chunks_from_text,
+    load_chunks_jsonl,
+    save_chunks_jsonl,
+    validate_chunk_contract,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +51,20 @@ def build_metadata(row: pd.Series) -> dict:
         if hasattr(value, "item"):
             value = value.item()
         metadata[target_key] = value
+
+    # 청크 계약(REQUIRED_METADATA_FIELDS)은 사업명을 project_name으로도 요구한다.
+    if "title" in metadata:
+        metadata["project_name"] = metadata["title"]
     return metadata
+
+
+# 클리닝된 본문 JSONL을 읽어 doc_id별 본문으로 반환합니다.
+def load_cleaned_documents(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as file:
+        documents = [json.loads(line) for line in file if line.strip()]
+    if not documents:
+        raise ValueError(f"클리닝된 문서가 없습니다: {path}")
+    return {document["doc_id"]: document for document in documents}
 
 
 # 저장된 JSONL이 필수 형식과 처리 문서 수를 만족하는지 검증합니다.
@@ -84,10 +103,12 @@ def main() -> None:
     metadata_path = resolve_project_path(config["paths"]["metadata"])
     raw_documents_path = resolve_project_path(config["paths"]["raw_documents"])
     output_path = resolve_project_path(args.output or config["paths"]["chunks"])
+    cleaned_documents_path = resolve_project_path(config["paths"]["cleaned_documents"])
     failure_log_path = resolve_project_path(config["paths"]["extraction_failures"])
     chunk_size = config["chunking"]["chunk_size"]
     chunk_overlap = config["chunking"]["chunk_overlap"]
 
+    cleaned_documents = load_cleaned_documents(cleaned_documents_path)
     metadata_frame = pd.read_csv(metadata_path, encoding="utf-8-sig")
     missing_columns = sorted(set(METADATA_COLUMNS) - set(metadata_frame.columns))
     if missing_columns:
@@ -105,10 +126,17 @@ def main() -> None:
                 raise ValueError("메타데이터의 파일명이 비어 있습니다.")
 
             file_name = str(row["파일명"]).strip()
-            document_chunks = build_chunks(
-                file_path=raw_documents_path / file_name,
-                doc_id=doc_id,
-                metadata=build_metadata(row),
+            if doc_id not in cleaned_documents:
+                raise ValueError(f"클리닝된 본문이 없습니다: {cleaned_documents_path}")
+
+            document_chunks = build_chunks_from_text(
+                cleaned_documents[doc_id]["text"],
+                doc_id,
+                {
+                    "file_name": file_name,
+                    "source_path": str(raw_documents_path / file_name),
+                    **build_metadata(row),
+                },
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
             )
@@ -134,6 +162,8 @@ def main() -> None:
     ).to_csv(failure_log_path, index=False, encoding="utf-8-sig")
 
     loaded_chunks = validate_chunks(output_path, successful_document_count)
+    validate_chunk_contract(loaded_chunks)
+    print(f"클리닝 본문: {cleaned_documents_path}")
     print(f"처리 문서: {successful_document_count}/{len(metadata_frame)}건")
     print(f"생성 청크: {len(loaded_chunks)}개")
     print(f"청크 설정: size={chunk_size}, overlap={chunk_overlap}")

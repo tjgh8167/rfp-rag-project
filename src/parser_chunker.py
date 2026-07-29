@@ -395,7 +395,27 @@ def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     return chunks
 
 
-# 문서 본문을 청킹하고 각 청크에 문서 ID와 메타데이터를 연결합니다.
+# 이미 추출·클리닝을 마친 본문을 청킹하고 각 청크에 문서 ID와 메타데이터를 연결합니다.
+def build_chunks_from_text(
+    text: str,
+    doc_id: str,
+    metadata: dict,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[Chunk]:
+    return [
+        Chunk(
+            chunk_id=f"{doc_id}_chunk_{idx:04d}",
+            doc_id=doc_id,
+            text=chunk,
+            metadata=metadata,
+        )
+        for idx, chunk in enumerate(chunk_text(text, chunk_size, chunk_overlap), start=1)
+    ]
+
+
+# 원본 파일에서 본문을 읽어 청킹하고 각 청크에 문서 ID와 메타데이터를 연결합니다.
 def build_chunks(
     file_path: str | Path,
     doc_id: str,
@@ -405,22 +425,19 @@ def build_chunks(
     chunk_overlap: int,
 ) -> list[Chunk]:
     path = Path(file_path)
-    text = read_document(path)
     base_metadata = {
         "file_name": path.name,
         "source_path": str(path),
         **(metadata or {}),
     }
 
-    return [
-        Chunk(
-            chunk_id=f"{doc_id}_chunk_{idx:04d}",
-            doc_id=doc_id,
-            text=chunk,
-            metadata=base_metadata,
-        )
-        for idx, chunk in enumerate(chunk_text(text, chunk_size, chunk_overlap), start=1)
-    ]
+    return build_chunks_from_text(
+        read_document(path),
+        doc_id,
+        base_metadata,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
 
 
 # 생성한 청크 목록을 한 줄에 한 청크씩 JSONL 파일로 저장합니다.
