@@ -16,6 +16,7 @@ class OpenAIChromaRetriever:
             retrieval_config = self.config["retrieval"]
         else:
             retrieval_config = self.config
+
         openai_config = retrieval_config["profiles"]["openai"]
         
         embedding_model = openai_config["embedding_model"]
@@ -34,6 +35,9 @@ class OpenAIChromaRetriever:
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
         self.fetch_k_base = openai_config["fetch_k"]  # 부분 일치 검색 활용
 
+        # 하이브리드 서치 인스턴스 초기화
+        self.hybrid_engine = None
+
         # mmr 조절값 설정
         self.lambda_mult = openai_config["lambda_mult"]
 
@@ -51,7 +55,15 @@ class OpenAIChromaRetriever:
         text = re.sub(r'\s+', ' ', text)               # 공백 문자(스페이스, 탭 등)를 단일 공백으로 변환
         return text.strip()
 
-    def search(self, query: str, top_k: int | None = None, filters: dict | None = None) -> list[SearchResult]:
+    def search(self, query: str, top_k: int | None = None, filters: dict | None = None, _is_hybrid_internal: bool = False) -> list[SearchResult]:
+        if self.search_method == "hybrid" and not _is_hybrid_internal:
+            if self.hybrid_engine is None:
+                from src.hybrid_search import HybridRetriever
+                # 현재 객체(self)를 전달해 DB 연결 중복 및 무한 루프 방지
+                self.hybrid_engine = HybridRetriever(self.config, dense_retriever=self)
+
+            # HybridRetriever로 검색 위임 후 즉시 반환
+            return self.hybrid_engine.search(query, top_k=top_k, filters=filters)
 
         # CLI에서 호출할때는 yaml값 그대로, 코드에서 바꾸면 인자값으로 (yaml top_k바꾸면 바뀜)
         search_k = top_k if top_k is not None else self.default_top_k
@@ -68,10 +80,17 @@ class OpenAIChromaRetriever:
         fetch_k = min(self.fetch_k_base, total_chunks) # fetch_k가 전체 청크 수를 넘지않도록
         search_k = min(search_k, total_chunks)         # search_k가 전체 청크 수를 넘지않도록
 
+        # 소문자로 변경 (yaml에는 원래 소문자로 쓰지만 안전장치)
+        active_search_method = self.search_method.lower()
+
+        # 하이브리드 로직 구동
+        if active_search_method == "hybrid" and _is_hybrid_internal:
+            active_search_method = "similarity"
+
         # Search_methood 조건별 작동 로직
         try: 
             # Search_method 명시적 분기 및 예외 처리
-            if self.search_method.lower() == "mmr":
+            if active_search_method == "mmr":
                 # MMR 검색 (다양성 고려)
                 mmr_k = search_k
                 
@@ -89,7 +108,7 @@ class OpenAIChromaRetriever:
                 # Langchain의 MMR은 유사도 점수를 반환하지 않으므로 구조 통일을 위해 0.0으로 처리
                 docs_and_scores = [(doc, 0.0) for doc in docs]
 
-            elif self.search_method.lower() == "similarity":
+            elif active_search_method == "similarity":
                 # 유사도 기반 검색 시 필터(--filters{})가 있으면 fetch_k 사용 / 없다면 search_k 사용
                 search_limit = fetch_k if active_filters else search_k
 
