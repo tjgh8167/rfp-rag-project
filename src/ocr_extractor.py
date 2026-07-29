@@ -86,13 +86,28 @@ def image_dimensions(image_bytes: bytes) -> tuple[int, int]:
         return image.size
 
 
-def extract_ocr_text(image_bytes: bytes, language: str) -> str:
+def extract_ocr_text(
+    image_bytes: bytes,
+    language: str,
+    *,
+    page_seg_mode: int,
+    image_scale: int,
+) -> str:
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     with Image.open(io.BytesIO(image_bytes)) as image:
-        return pytesseract.image_to_string(image, lang=language).strip()
-
+        prepared = ImageOps.autocontrast(image.convert("L"))
+        if image_scale > 1:
+            prepared = prepared.resize(
+                (prepared.width * image_scale, prepared.height * image_scale),
+                Image.Resampling.LANCZOS,
+            )
+        return pytesseract.image_to_string(
+            prepared,
+            lang=language,
+            config=f"--psm {page_seg_mode}",
+        ).strip()
 
 def merge_ocr_text(document_text: str, ocr_texts: list[str]) -> str:
     usable_texts = [text.strip() for text in ocr_texts if text and text.strip()]
