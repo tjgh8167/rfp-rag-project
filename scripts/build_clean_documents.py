@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from src.parser_chunker import read_document
+from src.parser_chunker import read_document, read_hwp_sections
 from src.text_cleaner import clean_document_text, verify_preservation
 
 
@@ -111,6 +111,22 @@ def main() -> None:
                 exclude_tables=args.exclude_tables,
                 table_options=config["hwp_table"],
             )
+            # 절 제목을 청크에 붙이려면 제목과 본문의 짝을 유지해야 합니다.
+            # 클리닝을 절 단위로 돌리고 결과를 함께 저장합니다.
+            sections = []
+            if args.exclude_tables and (raw_documents_path / file_name).suffix.lower() == ".hwp":
+                for section in read_hwp_sections(
+                    raw_documents_path / file_name,
+                    config["hwp_table"],
+                    config["chunking"]["max_section_title_length"],
+                ):
+                    section_text, _ = clean_document_text(
+                        section["text"],
+                        max_blank_lines=max_blank_lines,
+                        min_duplicate_paragraph_length=min_duplicate_paragraph_length,
+                    )
+                    if section_text.strip():
+                        sections.append({"title": section["title"], "text": section_text})
             cleaned_text, stats = clean_document_text(
                 original_text,
                 max_blank_lines=max_blank_lines,
@@ -134,6 +150,7 @@ def main() -> None:
                     "doc_id": doc_id,
                     "file_name": file_name,
                     "text": cleaned_text,
+                    "sections": sections,
                     "text_sha256": hashlib.sha256(cleaned_text.encode("utf-8")).hexdigest(),
                 }
             )

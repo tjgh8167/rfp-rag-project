@@ -20,6 +20,7 @@ from scripts.build_chunks import METADATA_COLUMNS, build_metadata, load_config, 
 from src.parser_chunker import (
     Chunk,
     build_chunks_from_text,
+    chunk_text,
     chunk_image,
     chunk_table,
     load_chunks_jsonl,
@@ -42,7 +43,57 @@ def group_by_doc(records: list[dict]) -> dict:
     return grouped
 
 
-def table_chunks(records: list[dict], doc_id: str, metadata: dict, max_chars: int) -> list[Chunk]:
+# 절 제목을 청크 앞에 세웁니다.
+# 청크만 보면 어느 항목인지 알 수 없어, 문장으로 들어오는 질문과 임베딩 거리가 멉니다.
+# 잘린 청크마다 제목을 반복하는 것은 표 청크에서 헤더를 반복하는 것과 같은 이유입니다.
+def body_chunks(document: dict, doc_id: str, metadata: dict, chunking: dict) -> list[Chunk]:
+    sections = document.get("sections") if chunking["use_section_titles"] else None
+    if not sections:
+        return build_chunks_from_text(
+            document["text"],
+            doc_id,
+            metadata,
+            chunk_size=chunking["chunk_size"],
+            chunk_overlap=chunking["chunk_overlap"],
+        )
+
+    chunks = []
+    number = 0
+    for section in sections:
+        title = section["title"]
+        for part in chunk_text(
+            section["text"], chunking["chunk_size"], chunking["chunk_overlap"]
+        ):
+            number += 1
+            chunk_metadata = {**metadata}
+            if title:
+                chunk_metadata["section_title"] = title
+            chunks.append(
+                Chunk(
+                    chunk_id=f"{doc_id}_chunk_{number:04d}",
+                    doc_id=doc_id,
+                    text=f"[{title}]\n{part}" if title else part,
+                    metadata=chunk_metadata,
+                )
+            )
+    return chunks
+
+
+# 표 청크는 마크다운 격자뿐이라 어느 기관의 무슨 사업인지 텍스트에 없습니다.
+# 임베딩은 text만 반영하므로 기관명을 언급하는 질문에서 표가 검색되지 않습니다.
+def table_headline(metadata: dict) -> str:
+    parts = [metadata.get("agency", ""), metadata.get("title", "")]
+    parts = [part for part in parts if part]
+    return f"[{' · '.join(parts)}]\n" if parts else ""
+
+
+def table_chunks(
+    records: list[dict],
+    doc_id: str,
+    metadata: dict,
+    max_chars: int,
+    headline: str = "",
+) -> list[Chunk]:
     """표 하나가 상한을 넘으면 행 단위로 나뉘어 여러 청크가 됩니다."""
     chunks = []
     number = 0
@@ -64,7 +115,7 @@ def table_chunks(records: list[dict], doc_id: str, metadata: dict, max_chars: in
                 Chunk(
                     chunk_id=f"{doc_id}_table_{number:04d}",
                     doc_id=doc_id,
-                    text=part,
+                    text=headline + part,
                     metadata=chunk_metadata,
                 )
             )
@@ -157,19 +208,14 @@ def main() -> None:
             **build_metadata(row),
         }
 
-        body = build_chunks_from_text(
-            cleaned[doc_id]["text"],
-            doc_id,
-            metadata,
-            chunk_size=chunking["chunk_size"],
-            chunk_overlap=chunking["chunk_overlap"],
-        )
+        body = body_chunks(cleaned[doc_id], doc_id, metadata, chunking)
         # PDF 표는 텍스트 레이어에서, HWP 표는 본문 레코드에서 나옵니다. 한 문서에 둘 다 있지는 않습니다.
         tables = table_chunks(
             pdf_tables.get(doc_id, []) + hwp_tables.get(doc_id, []),
             doc_id,
             metadata,
             chunking["table_chunk_size"],
+            table_headline(metadata) if chunking["use_table_headline"] else "",
         )
         pictures = image_chunks(
             images.get(doc_id, []), doc_id, metadata, chunking["image_chunk_size"]
