@@ -12,6 +12,9 @@ paths:
   table_report: /data/processed/table_report.csv
   hwp_table_documents: /data/processed/hwp_table_documents.jsonl
   hwp_table_report: /data/processed/hwp_table_report.csv
+  # 표·이미지를 반영한 청크. 비교를 위해 기존 chunks와 별도 파일로 둡니다.
+  cleaned_documents_no_table: /data/processed/cleaned_documents_no_table.jsonl
+  chunks_with_extraction: /data/processed/chunks_extraction_800_120.jsonl
   multimodal_documents: /data/processed/multimodal_documents.jsonl
   multimodal_report: /data/processed/multimodal_report.csv
 
@@ -23,6 +26,9 @@ cleaning:
 chunking:
   chunk_size: 800
   chunk_overlap: 120
+  # 표는 행이 잘리면 항목과 값의 관계가 깨지므로 글자 수가 아니라 행 경계에서 나눕니다.
+  table_chunk_size: 800
+  image_chunk_size: 800
 
 ocr:
   language: kor+eng

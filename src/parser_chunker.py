@@ -89,8 +89,30 @@ def _iter_hwp_body_records(hwp: olefile.OleFileIO, compressed: bool):
             yield tag_id, level, record
 
 
+# 표 하나가 끝났을 때 본문에 남길지 결정합니다.
+# 표 청크가 담당하는 표는 본문에서 빼고, 담당하지 않는 표는 글자만 본문에 넣습니다.
+def _flush_hwp_table(table: dict, options: dict, paragraphs: list[str]) -> None:
+    if is_hwp_content_table(
+        table,
+        options["min_rows"],
+        options["min_columns"],
+        options["min_density"],
+    ):
+        return
+    for cell in table["cells"]:
+        paragraphs.extend(cell["text"])
+
+
 # HWP 5.x 파일의 압축된 본문 스트림을 열어 텍스트를 추출합니다.
-def _read_hwp(path: Path) -> str:
+# exclude_tables=True면 표 안의 글자를 건너뜁니다. 표는 extract_hwp_tables로 따로 뽑아
+# 표 청크로 관리하므로, 본문에 함께 넣으면 같은 내용이 두 벌이 됩니다.
+# 다만 표 청크로 가지 않는 표(1행·1열 제목 상자 등)는 본문에 남깁니다.
+# 그 표에는 장·절 제목이 들어 있어 빼면 목차가 어디에도 남지 않습니다.
+def _read_hwp(
+    path: Path,
+    exclude_tables: bool = False,
+    table_options: dict | None = None,
+) -> str:
 
     if not olefile.isOleFile(path):
         raise ValueError("HWP 5.x OLE 문서가 아닙니다.")
@@ -105,11 +127,41 @@ def _read_hwp(path: Path) -> str:
             raise ValueError("지원하지 않는 HWP 문서입니다.")
 
         compressed = bool(file_header[36] & 1)
-        for tag_id, _level, record in _iter_hwp_body_records(hwp, compressed):
+        options = table_options or {}
+        open_tables: list[dict] = []
+        for tag_id, level, record in _iter_hwp_body_records(hwp, compressed):
+            if exclude_tables:
+                # 표보다 얕은 계층이 나오면 그 표가 끝난 것이므로 결과를 판정합니다.
+                while open_tables and level < open_tables[-1]["level"]:
+                    _flush_hwp_table(open_tables.pop(), options, paragraphs)
+                if tag_id == HWP_TABLE_TAG and len(record) >= 8:
+                    open_tables.append(
+                        {
+                            "rows": int.from_bytes(record[4:6], "little"),
+                            "columns": int.from_bytes(record[6:8], "little"),
+                            "level": level,
+                            "cells": [],
+                        }
+                    )
+                    continue
+                if open_tables:
+                    current = open_tables[-1]
+                    if tag_id == HWP_LIST_HEADER_TAG:
+                        position = _hwp_cell_position(record)
+                        if position is not None:
+                            current["cells"].append({**position, "text": []})
+                    elif tag_id == HWP_PARA_TEXT_TAG and current["cells"]:
+                        paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
+                        if paragraph:
+                            current["cells"][-1]["text"].append(paragraph)
+                    continue
             if tag_id == HWP_PARA_TEXT_TAG:
                 paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
                 if paragraph:
                     paragraphs.append(paragraph)
+
+        while open_tables:
+            _flush_hwp_table(open_tables.pop(), options, paragraphs)
 
     return "\n".join(paragraphs)
 
@@ -355,7 +407,11 @@ def inspect_document_visual_content(path: str | Path) -> dict:
     raise ValueError(f"지원하지 않는 파일 형식입니다: {path.suffix}")
 
 # 파일 확장자에 맞는 방식으로 TXT, PDF, HWP 문서의 본문을 읽습니다.
-def read_document(path: str | Path) -> str:
+def read_document(
+    path: str | Path,
+    exclude_tables: bool = False,
+    table_options: dict | None = None,
+) -> str:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"문서 파일을 찾을 수 없습니다: {path}")
@@ -372,7 +428,7 @@ def read_document(path: str | Path) -> str:
         return "\n\n".join(pages).strip()
 
     if suffix == ".hwp":
-        return _read_hwp(path).strip()
+        return _read_hwp(path, exclude_tables, table_options).strip()
 
     raise ValueError(f"지원하지 않는 파일 형식입니다: {path.suffix}")
 
@@ -392,6 +448,59 @@ def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
             break
         start = max(end - chunk_overlap, start + 1)
 
+    return chunks
+
+
+# 표를 행 단위로 나눕니다.
+# chunk_text는 줄바꿈을 공백으로 합쳐 표의 행 구분이 사라지므로 표에는 쓸 수 없습니다.
+# 크기를 넘으면 행 경계에서 자르고, 잘린 청크마다 헤더 행을 다시 넣어 항목과 값의 관계를 유지합니다.
+def chunk_table(markdown: str, max_chars: int) -> list[str]:
+    rows = [row for row in markdown.splitlines() if row.strip()]
+    if not rows:
+        return []
+    if len(markdown) <= max_chars:
+        return [markdown]
+
+    header = rows[0]
+    chunks = []
+    current = [header]
+    current_length = len(header)
+
+    for row in rows[1:]:
+        # 헤더만 남은 상태에서는 한 행이 상한을 넘더라도 잘라내지 않고 그대로 담습니다.
+        if current_length + len(row) + 1 > max_chars and len(current) > 1:
+            chunks.append("\n".join(current))
+            current = [header, row]
+            current_length = len(header) + len(row) + 1
+            continue
+        current.append(row)
+        current_length += len(row) + 1
+
+    if len(current) > 1:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+# 이미지 한 장을 청크 하나로 만듭니다. 상한을 넘을 때만 줄 단위로 나눕니다.
+def chunk_image(text: str, max_chars: int) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    current: list[str] = []
+    current_length = 0
+    for line in text.splitlines():
+        if current and current_length + len(line) + 1 > max_chars:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
     return chunks
 
 

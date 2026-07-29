@@ -227,14 +227,15 @@ def spatial_layout(items: list[dict], gap_multiplier: float) -> dict:
 
 
 def combined_context(ocr_text: str, layout: dict, vlm_text: str | None) -> str:
-    rows = "\n".join(
-        f"\ud589 {row['row_index']}: " + " | ".join(item["text"] for item in row["items"])
-        for row in layout["rows"]
-    )
-    parts = [
-        "\uc774\ubbf8\uc9c0 OCR \ud14d\uc2a4\ud2b8:\n" + ocr_text,
-        "\uacf5\uac04 \ubc30\uce58(\ud654\uc0b4\ud45c \ud750\ub984 \uc544\ub2d8):\n" + rows,
-    ]
+    parts = ["\uc774\ubbf8\uc9c0 OCR \ud14d\uc2a4\ud2b8:\n" + ocr_text]
+    # openai_only\ub294 PaddleOCR\uc744 \uac70\uce58\uc9c0 \uc54a\uc544 \uc88c\ud45c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.
+    # \uadf8\ub54c\ub294 \uacf5\uac04 \ubc30\uce58 \ud56d\ubaa9\uc744 \ub123\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.
+    if layout.get("rows"):
+        rows = "\n".join(
+            f"\ud589 {row['row_index']}: " + " | ".join(item["text"] for item in row["items"])
+            for row in layout["rows"]
+        )
+        parts.append("\uacf5\uac04 \ubc30\uce58(\ud654\uc0b4\ud45c \ud750\ub984 \uc544\ub2d8):\n" + rows)
     if vlm_text:
         parts.append("\uac80\ud1a0 \ud544\uc694 VLM \uac1c\uc694:\n" + vlm_text)
     return "\n\n".join(parts)
