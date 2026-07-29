@@ -246,7 +246,10 @@ def hwp_table_to_markdown(table: dict) -> str:
     for cell in table["cells"]:
         if cell["row"] >= rows or cell["column"] >= columns:
             continue
-        grid[cell["row"]][cell["column"]] = " ".join(cell["text"])
+        text = " ".join(cell["text"])
+        # 좌표가 같은 셀이 드물게 있습니다. 덮어쓰면 앞의 내용이 사라지므로 이어 붙입니다.
+        seat = grid[cell["row"]][cell["column"]]
+        grid[cell["row"]][cell["column"]] = f"{seat} {text}".strip() if seat else text
     return "\n".join("| " + " | ".join(row) + " |" for row in grid)
 
 
