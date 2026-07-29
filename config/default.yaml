@@ -117,8 +117,8 @@ multimodal:
   bnb_4bit_compute_dtype: bfloat16
   device_map: auto
   max_new_tokens: 180
-  # paddle_qwen: PaddleOCR + Qwen(현행) / paddle_openai: 판정·요약만 OpenAI / openai_only: 이미지 전체를 OpenAI
-  extraction_mode: paddle_qwen
+  # openai_only(채택): 이미지 전체를 OpenAI / paddle_openai: 판정·요약만 OpenAI / paddle_qwen: PaddleOCR + 로컬 Qwen
+  extraction_mode: openai_only
   openai_model: gpt-5-mini        # vlm_provider가 openai일 때 쓰는 비전 모델
   openai_max_output_tokens: 4000  # 상한값. 과금은 실제 사용량 기준(요약만 80, 전체 추출은 수백~수천)
   openai_reasoning_effort: minimal  # 유형 판정+한 문장 요약에 추론은 불필요. 기본값은 2배 느리고 토큰 4배
