@@ -32,6 +32,14 @@ class BM25SparseRetriever:
         # BM25 객체 생성
         self.bm25 = BM25Okapi(tokenized_corpus)
 
+        # retriever.py와 같은 구조 통일
+        if "retrieval" in self.config:
+            retrieval_config = self.config["retrieval"]
+        else:
+            retrieval_config = self.config
+            
+        self.default_top_k = retrieval_config["top_k"]
+
     def _load_chunks(self, path: str) -> List[Dict[str, Any]]:
         chunks = []
         with open(path, "r", encoding="utf-8") as f:
@@ -40,9 +48,10 @@ class BM25SparseRetriever:
                     chunks.append(json.loads(line))
         return chunks
 
-    def search(self, query: str, top_k: int = 50, filters: dict | None = None) -> List[SearchResult]:
+    def search(self, query: str, top_k: int | None = None, filters: dict | None = None) -> List[SearchResult]:
+        search_k = top_k if top_k is not None else self.default_top_k
         tokenized_query = tokenize(query)
-        
+
         # BM25 점수 한 번에 연산
         doc_scores = self.bm25.get_scores(tokenized_query)
         
@@ -71,7 +80,7 @@ class BM25SparseRetriever:
             
         # 점수 기준 내림차순 정렬 후 상위 top_k개 반환
         results.sort(key=lambda x: x.score, reverse=True)
-        return results[:top_k]
+        return results[:search_k]
 
 class HybridRetriever:
     def __init__(self, config: dict, dense_retriever):
