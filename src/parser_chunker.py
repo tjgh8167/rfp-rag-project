@@ -198,12 +198,14 @@ def hwp_table_to_markdown(table: dict) -> str:
     return "\n".join("| " + " | ".join(row) + " |" for row in grid)
 
 
-# 전체 칸 중 내용이 있는 칸의 비율입니다. 값을 적지 않은 빈 서식을 걸러낼 때 씁니다.
+# 셀 중 내용이 있는 셀의 비율입니다. 값을 적지 않은 빈 서식을 걸러낼 때 씁니다.
+# 분모는 행×열이 아니라 실제 셀 수입니다. 병합된 셀은 격자에서 여러 칸을 차지하지만
+# 셀 자체는 하나여서, 행×열로 나누면 내용이 꽉 찬 표도 밀도가 낮게 나옵니다.
 def hwp_table_density(table: dict) -> float:
-    expected = table["rows"] * table["columns"]
-    if expected <= 0:
+    cells = table["cells"]
+    if not cells:
         return 0.0
-    return sum(1 for cell in table["cells"] if cell["text"]) / expected
+    return sum(1 for cell in cells if cell["text"]) / len(cells)
 
 
 # 청크에 넣을 만한 표인지 판단합니다.
