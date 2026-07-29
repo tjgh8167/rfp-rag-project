@@ -53,7 +53,10 @@ hwp_table:
 retrieval:
   active_profile: baseline
   top_k: 5 # fetch_k 적용으로 실제 검색 시 가져올 상위 결과 수 조정 (3 -> 5)
-  search_method: mmr # similarity, mmr, hybrid(사용 불가)
+  search_method: similarity # similarity, mmr, hybrid
+  hybrid:  
+    alpha: 0.8             # Dense(유사성): BM25(정확성) 가중치 비율 (alpha = Dense의 비율)
+    candidate_count: 50    # 1차 후보로 전달할 각 검색기별 문서 개수 (fetch_k와 동일한 수)
   profiles:
     baseline:
       provider: lexical

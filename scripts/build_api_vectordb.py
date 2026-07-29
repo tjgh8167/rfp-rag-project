@@ -6,6 +6,12 @@ from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
+'''
+# 생성 규칙
+1. 청크 내용, 청킹 설정(`chunk_size`, `chunk_overlap`), 임베딩 모델, collection 이름이 바뀌면 기존 컬렉션을 삭제하고 다시 생성합니다. 청크 수만으로 최신 여부를 판단하지 않습니다.
+2. Hybrid 검색 시 BM25와 벡터 검색의 연동을 위해 새로운 청크 생성 시 ChromaDB 재구축을 해야합니다. 
+'''
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 def build_db():
@@ -39,14 +45,14 @@ def build_db():
     print(f"JSONL 청크 파일 로드 완료: {total_input_chunks}개의 청크 확인")
 
     # OpenAI yaml 설정 확인
-    openai_config = config.get("retrieval", {}).get("profiles", {}).get("openai", {})
-    embedding_model = openai_config.get("embedding_model", "text-embedding-3-small")
-    persist_directory = openai_config.get("persist_directory", "vector_db/openai")
-    collection_name = openai_config.get("collection_name", "bidmate_openai")
+    openai_config = config["retrieval"]["profiles"]["openai"]
+    embedding_model = openai_config["embedding_model"]
+    persist_directory = openai_config["persist_directory"]
+    collection_name = openai_config["collection_name"]
 
-    chunking_config = config.get("chunking", {})
-    chunk_size = chunking_config.get("chunk_size", 800)
-    chunk_overlap = chunking_config.get("chunk_overlap", 120)
+    chunking_config = config["chunking"]
+    chunk_size = chunking_config["chunk_size"]
+    chunk_overlap = chunking_config["chunk_overlap"]
 
     # 임베딩 모델 초기화
     embeddings = OpenAIEmbeddings(model=embedding_model)
