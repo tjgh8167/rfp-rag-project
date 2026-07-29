@@ -221,7 +221,7 @@ sprint-ai-mid-project_team3/
 │   ├── openai_chroma_retriever.py     # Retrieval 1 담당
 │   ├── hybrid_search.py               # BM25 + 임베딩 하이브리드 검색 (Retrieval 1)
 │   ├── local_chroma_retriever.py      # Retrieval 2 담당
-│   └── rag_engine.py                  # 프롬프트·LLM 호출·답변 생성 (Generation)
+│   └── rag_engine.py                  # 프롬프트·LLM 호출·Tool Calling·답변 생성 (Generation)
 ├── notebook/
 │   ├── 00_data_inspection.ipynb       # 원본 메타데이터·파일 매칭 확인
 │   ├── 01_parser_chunker_test.ipynb   # PDF/HWP 추출·청킹 확인
@@ -231,6 +231,7 @@ sprint-ai-mid-project_team3/
 │   ├── 05_chunk_contract_test.ipynb   # 청크 계약 검증
 │   ├── 05_ocr_extraction_test.ipynb   # OCR·표 추출 결과 확인
 │   ├── 06_multimodal_extract_test.ipynb    # 이미지 5종 OCR·공간배치·VLM 비교
+│   ├── 06_tool_calling_test.ipynb     # 숫자 계산 Tool Calling 검증
 │   ├── 07_vision_model_comparison.ipynb    # gpt-5-mini vs gpt-5-nano
 │   ├── 08_extraction_path_comparison.ipynb # PDF 표·HWP 표·이미지 결과와 원본 대조
 │   ├── 09_chunk_comparison.ipynb      # 추출 미적용 vs 적용 청크 비교
