@@ -2,11 +2,13 @@ paths:
   metadata: /data/original_data/data_list.csv
   normalized_metadata: /data/processed/metadata.csv
   raw_documents: /data/original_data/files
-  # 검색·임베딩이 읽는 청크 파일입니다. 아래 둘 중 하나를 골라 씁니다.
-  # 표·이미지 추출 적용 여부를 비교해야 하므로 두 파일 모두 유지합니다.
+  # 검색·임베딩이 읽는 청크 파일입니다. 아래 셋 중 하나를 골라 chunks에 지정합니다.
+  # 적용 단계별 효과를 비교해야 하므로 세 파일 모두 유지합니다.
   #   chunks_800_120.jsonl            추출 미적용. 본문만, 표는 뭉개져 있고 이미지 없음 (10,222개)
-  #   chunks_extraction_800_120.jsonl 추출 적용. 본문 + 표 + 이미지 (17,382개)
-  # 전환은 이 값만 바꾸면 되고 코드 수정은 필요 없습니다. 단, Vector DB는 다시 만들어야 합니다.
+  #   chunks_extraction_800_120.jsonl 표·이미지 추출 적용 (17,382개)
+  #   chunks_section_800_120.jsonl    위에 절 제목까지 적용 (18,518개, 채택안)
+  # 전환은 chunks 값만 바꾸면 되고 코드 수정은 필요 없습니다. 단, Vector DB는 다시 만들어야 합니다.
+  # 각 파일을 만드는 방법은 아래 chunks_with_* 경로와 chunking.use_section_titles를 참고하세요.
   chunks: /data/processed/chunks_800_120.jsonl
   extraction_failures: /data/processed/extraction_failures.csv
   ocr_documents: /data/processed/ocr_documents.jsonl
@@ -17,9 +19,11 @@ paths:
   table_report: /data/processed/table_report.csv
   hwp_table_documents: /data/processed/hwp_table_documents.jsonl
   hwp_table_report: /data/processed/hwp_table_report.csv
-  # 표·이미지를 반영한 청크. 비교를 위해 기존 chunks와 별도 파일로 둡니다.
   cleaned_documents_no_table: /data/processed/cleaned_documents_no_table.jsonl
+  # build_extraction_chunks가 결과를 저장할 위치입니다.
+  # chunking.use_section_titles가 true면 chunks_with_section, false면 chunks_with_extraction에 씁니다.
   chunks_with_extraction: /data/processed/chunks_extraction_800_120.jsonl
+  chunks_with_section: /data/processed/chunks_section_800_120.jsonl
   multimodal_documents: /data/processed/multimodal_documents.jsonl
   multimodal_report: /data/processed/multimodal_report.csv
 

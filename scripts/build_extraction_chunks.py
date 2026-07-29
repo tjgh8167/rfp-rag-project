@@ -177,7 +177,13 @@ def main() -> None:
 
     metadata_frame = pd.read_csv(resolve_project_path(paths["metadata"]), encoding="utf-8-sig")
     raw_documents_path = resolve_project_path(paths["raw_documents"])
-    output_path = resolve_project_path(args.output or paths["chunks_with_extraction"])
+    # 절 제목 적용 여부에 따라 다른 파일에 씁니다. 세 세트를 비교하려면 서로 덮어쓰면 안 됩니다.
+    default_output = (
+        paths["chunks_with_section"]
+        if chunking["use_section_titles"]
+        else paths["chunks_with_extraction"]
+    )
+    output_path = resolve_project_path(args.output or default_output)
 
     cleaned = {
         record["doc_id"]: record
