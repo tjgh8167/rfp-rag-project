@@ -32,11 +32,15 @@ class OpenAIChromaRetriever:
         # 검색 방식 설정
         self.search_method = retrieval_config["search_method"]
 
+        # 리랭크 
+        self.use_rerank = retrieval_config["use_rerank"]
+
         # 부분 일치 설정 (ChromaDB는 기본적으로 정확히 일치하는 필터만 지원하므로, 부분 일치를 위해서는 검색 결과를 더 많이 가져와서 필터링 후 top_k만큼 반환)
         self.fetch_k_base = openai_config["fetch_k"]  # 부분 일치 검색 활용
 
-        # 하이브리드 서치 인스턴스 초기화
+        # 하이브리드 서치, 리랭크 인스턴스 초기화
         self.hybrid_engine = None
+        self.reranker_engine = None
 
         # mmr 조절값 설정
         self.lambda_mult = openai_config["lambda_mult"]
@@ -55,16 +59,40 @@ class OpenAIChromaRetriever:
         text = re.sub(r'\s+', ' ', text)               # 공백 문자(스페이스, 탭 등)를 단일 공백으로 변환
         return text.strip()
 
-    def search(self, query: str, top_k: int | None = None, filters: dict | None = None, _is_hybrid_internal: bool = False) -> list[SearchResult]:
+    def search(self, query: str, top_k: int | None = None, filters: dict | None = None, _is_hybrid_internal: bool = False, _is_rerank_internal: bool = False) -> list[SearchResult]:
+
+        # 리랭크를 사용한다면     
+        if self.use_rerank and not _is_rerank_internal:
+            if self.reranker_engine is None:
+                from src.reranker import Reranker
+                self.reranker_engine = Reranker(self.config)
+
+            candidate_count = self.config["rerank"]["candidate_count"]
+
+            # 하위 검색(하이브리드 or MMR/Similarity)을 통해 후보군 수집
+            initial_results = self.search(
+                query=query, 
+                top_k=candidate_count, 
+                filters=filters, 
+                _is_hybrid_internal=_is_hybrid_internal, 
+                _is_rerank_internal=True
+            )
+
+            final_k = top_k if top_k is not None else self.default_top_k
+            return self.reranker_engine.rerank(query, initial_results, top_k=final_k)
+        
+        # 하이브리드 매서드를 사용한 경우
         if self.search_method == "hybrid" and not _is_hybrid_internal:
             if self.hybrid_engine is None:
                 from src.hybrid_search import HybridRetriever
+
                 # 현재 객체(self)를 전달해 DB 연결 중복 및 무한 루프 방지
                 self.hybrid_engine = HybridRetriever(self.config, dense_retriever=self)
 
-            # HybridRetriever로 검색 위임 후 즉시 반환
-            return self.hybrid_engine.search(query, top_k=top_k, filters=filters)
-
+            # use_rerank = False면 순수 hybrid top_k 검색 
+            target_top_k = self.config["rerank"]["candidate_count"] if self.use_rerank else top_k
+            return self.hybrid_engine.search(query, top_k=target_top_k, filters=filters)
+        
         # CLI에서 호출할때는 yaml값 그대로, 코드에서 바꾸면 인자값으로 (yaml top_k바꾸면 바뀜)
         search_k = top_k if top_k is not None else self.default_top_k
 
