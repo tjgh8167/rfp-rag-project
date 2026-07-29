@@ -1,6 +1,8 @@
 # src/rag_engine.py
 import os
 from dataclasses import asdict
+import ast
+import operator
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -35,28 +37,41 @@ SYSTEM_RULE = (
     "- 모든 답변은 신뢰감을 주는 **정중한 해요체/하십시오체('~합니다', '~안내해 드립니다')** 또는 **깔끔한 명사형/개조식(~함, ~기재)** 중 하나로 일관되게 작성할 것.\n"
     "- 반말, 혼잣말, 혹은 문장이 중간에 끊기는 현상이 절대 없도록 문장 끝맺음을 완벽하게 마무리할 것."
 )
-# 계산이 필요할 만한 질문만 1차로 걸러내는 키워드 필터.
-CALC_KEYWORDS = [
-    "계산", "합계", "총액", "총 금액", "차이", "%", "퍼센트", "비율",
-    "몇 배", "얼마", "증가", "감소", "평균",
-]
 
-def needs_calculator(question: str) -> bool:
-    """질문에 숫자 계산 관련 키워드가 있는지 확인한다. Tool Calling 경로로 보낼지 결정하는 1차 필터."""
-    return any(keyword in question for keyword in CALC_KEYWORDS)
+# 허용된 연산자만 화이트리스트로 정의 (이 외의 모든 구문은 계산 거부)
+_ALLOWED_BINOPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+}
+_ALLOWED_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+def _safe_eval(node):
+    """AST 노드를 재귀적으로 순회하며 숫자와 사칙연산만 직접 계산한다.
+    eval과 달리 함수 호출·이름 참조 등은 노드 타입 자체가 허용 목록에 없어 실행이 불가능하다."""
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
+        return _ALLOWED_BINOPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+        return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval(node.operand))
+    raise ValueError("숫자와 사칙연산(+ - * / 괄호)만 사용할 수 있습니다")
+
 
 @tool
 def calculate(expression: str) -> str:
     """사칙연산과 괄호로 이루어진 순수 수식을 계산합니다.
     입력 예시: '1200000000 * 0.15', '(500-320)/320*100'.
     단위(원, %, 개 등)나 문자 없이 숫자와 연산자(+ - * / ( ) .)만 포함해야 합니다."""
-    allowed_chars = set("0123456789+-*/(). ")
-    if not set(expression) <= allowed_chars:
-        return f"오류: 수식에 허용되지 않은 문자가 포함되어 있습니다 -> {expression}"
     try:
-        # __builtins__를 비워서 임의 코드 실행을 막고, 순수 산술 연산만 허용한다.
-        result = eval(expression, {"__builtins__": {}}, {})
+        # eval 대신 AST 파싱 후 허용된 노드(숫자·사칙연산)만 직접 계산해 임의 코드 실행을 원천 차단한다.
+        tree = ast.parse(expression, mode="eval")
+        result = _safe_eval(tree)
         return str(result)
+    except ZeroDivisionError:
+        return "계산 오류: 0으로 나눌 수 없습니다"
     except Exception as exc:
         return f"계산 오류: {exc}"
 
@@ -99,7 +114,7 @@ def build_llm(config: dict):
     is_reasoning_model = model_name.startswith(("gpt-5", "o1", "o3", "o4"))
     llm_kwargs = {"model": model_name, "max_tokens": max_tokens}
     if is_reasoning_model:
-        llm_kwargs["reasoning_effort"] = gen_config["reasoning_effort"]  # 추가
+        llm_kwargs["reasoning_effort"] = gen_config["reasoning_effort"]
     else:
         llm_kwargs["temperature"] = temperature
         llm_kwargs["top_p"] = top_p
@@ -143,7 +158,7 @@ def _generate_with_tool_calling(llm, messages: list) -> str:
     ai_message = llm_with_tools.invoke(messages)
  
     if not ai_message.tool_calls:
-        # 모델이 도구 없이도 답변 가능하다고 판단한 경우 (키워드는 걸렸지만 실제 계산은 불필요했던 케이스)
+        # 모델이 도구 없이도 답변 가능하다고 판단한 경우 (계산이 필요 없는 일반 질문)
         return ai_message.content
  
     # 2단계: 요청된 도구를 실제로 실행하고, 결과를 대화에 포함해 다시 호출
@@ -189,10 +204,7 @@ def generate_answer(
         context=context, question=question, history=history_messages
     )
 
-    if needs_calculator(question):
-        answer = _generate_with_tool_calling(llm, messages)
-    else:
-        answer = llm.invoke(messages).content
+    answer = _generate_with_tool_calling(llm, messages)
 
     return {
         "answer": answer,
