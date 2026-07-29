@@ -10,6 +10,8 @@ paths:
   cleaning_report: /data/processed/cleaning_report.csv
   table_documents: /data/processed/table_documents.jsonl
   table_report: /data/processed/table_report.csv
+  hwp_table_documents: /data/processed/hwp_table_documents.jsonl
+  hwp_table_report: /data/processed/hwp_table_report.csv
   multimodal_documents: /data/processed/multimodal_documents.jsonl
   multimodal_report: /data/processed/multimodal_report.csv
 
@@ -40,6 +42,13 @@ ocr:
   min_width: 200
   min_height: 100
   min_text_length: 2
+
+hwp_table:
+  # 1행 또는 1열 표는 제목에 테두리를 넣은 서식이라 내용이 아닙니다.
+  min_rows: 2
+  min_columns: 2
+  # 값을 적지 않은 빈 서식은 검색 근거가 되지 못합니다. 전체 표의 밀도 중앙값은 0.71입니다.
+  min_density: 0.2
 
 retrieval:
   active_profile: baseline
@@ -105,4 +114,10 @@ multimodal:
   bnb_4bit_compute_dtype: bfloat16
   device_map: auto
   max_new_tokens: 180
+  # openai_only(채택): 이미지 전체를 OpenAI / paddle_openai: 판정·요약만 OpenAI / paddle_qwen: PaddleOCR + 로컬 Qwen
+  extraction_mode: openai_only
+  openai_model: gpt-5-mini        # vlm_provider가 openai일 때 쓰는 비전 모델
+  openai_max_output_tokens: 4000  # 상한값. 과금은 실제 사용량 기준(요약만 80, 전체 추출은 수백~수천)
+  openai_reasoning_effort: minimal  # 유형 판정+한 문장 요약에 추론은 불필요. 기본값은 2배 느리고 토큰 4배
+  openai_image_detail: high       # low로 낮추면 비용은 줄고 정확도는 떨어진다
   do_sample: false

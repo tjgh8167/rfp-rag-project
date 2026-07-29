@@ -113,9 +113,29 @@ RFP 문서 → 파싱·청킹 → chunks_800_120.jsonl → 임베딩·Chroma 검
 | 추출 방식 | 채택 여부 | 근거 |
 | :--- | :--- | :--- |
 | PDF 텍스트 레이어 표(PyMuPDF `find_tables`) | 채택 | 행·열 구조가 그대로 보존됨 |
+| HWP 본문 표(레코드 직접 파싱) | 채택 | 파일에 저장된 셀 좌표를 읽으므로 오독이 없음. 문서 96개에서 표 11,930개를 실패 없이 복원 |
 | PaddleOCR 텍스트 + 좌표 기반 `spatial_layout` | 채택 | 좌표 계산 결과라 환각이 없음. 단 `spatial_layout`은 화살표 흐름이 아니라 이미지 안의 공간 배치임 |
-| VLM(Qwen2.5-VL) 개요 | 검토 후 채택 | 유형 오분류·요약 누락이 발생하므로 사람이 확인한 결과만 사용 |
+| 이미지 추출(OpenAI `openai_only`) | 채택 | 유형 판정 93%, 키워드 85%로 세 방식 중 가장 정확. 숫자 오독이 있어 검토는 유지 |
+| VLM(Qwen2.5-VL) 개요 | 미채택 | 유형 판정 57%. 전면 검정 이미지를 diagram으로 판정하고 큰 이미지에서 메모리 부족으로 중단됨 |
 | 로고·사진, `min_vlm_width`/`min_vlm_height` 미만 이미지 | VLM 미적용 | 개요의 가치가 없고 같은 문구가 반복 출력됨. OCR 텍스트만 보관 |
+
+**이미지 추출 방식 (이슈 #83)**
+
+동일한 이미지 15장에 세 방식을 각각 적용해 비교한 결과 `openai_only`를 채택했습니다. 표·서식 7장에 도식·차트·사진·로고와 전면 검정 이미지를 대조군으로 넣어 구성했고, 유형 판정은 15장 전부, 핵심 키워드는 원본과 직접 대조한 7장을 채점했습니다.
+
+| 모드 | 유형 판정 | 키워드 적중 | 표 구조 | 환각 | 비용 | 장당 시간 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `openai_only` | 93% | 85% | 5/7 | 없음 | $0.018 | 7.5초 |
+| `paddle_openai` | 100% | 62% | 2/7 | 없음 | $0.008 | 12.2초 |
+| `paddle_qwen` | 57% | 62% | 2/7 | 있음 | $0 | 12.9초 |
+
+비교 모델은 gpt-5-nano가 4.5배 저렴하지만 오독과 환각이 확인되어 gpt-5-mini를 사용합니다. 182장 기준 비용 차이가 $0.24 수준이라 이 규모에서는 정확도를 우선했습니다.
+
+표는 파일에 글자로 저장돼 있으면 이미지 경로를 쓰지 않습니다. PDF 표는 `pymupdf_find_tables`, HWP 본문 표는 레코드 직접 파싱으로 셀 좌표를 그대로 읽고, 이미지 경로는 그림으로만 존재해 다른 방법이 없을 때만 사용합니다.
+
+세 방식은 접근 가능한 대상이 달라 같은 표본으로 비교할 수 없습니다. 표 구조 보존율은 `openai_only` 5/7, PyMuPDF 698/740(94%), HWP 직접 파싱 11,930건 전부이며, `openai_only`에서는 `6.25 명`을 `62.5일`로 읽는 숫자 오독이 확인되었습니다. 파서가 접근할 수 있는 표에 이미지 경로를 쓰지 않는 이유입니다.
+
+실험 과정과 수치는 `docs/experiment_log_image_extraction.md`, 원본 대조는 `notebook/07_vision_model_comparison.ipynb`, `notebook/08_extraction_path_comparison.ipynb`에 있습니다.
 
 **검증 결과**
 
@@ -165,7 +185,8 @@ sprint-ai-mid-project_team3/
 │   └── default.yaml
 ├── docs/
 │   ├── chunks_schema.md               # 청크·SearchResult 공통 계약
-│   └── metadata_schema.md             # 표준 metadata.csv 및 청크 metadata 규격
+│   ├── metadata_schema.md             # 표준 metadata.csv 및 청크 metadata 규격
+│   └── experiment_log_image_extraction.md  # 이미지·표 추출 방식 비교 기록
 ├── data/
 │   ├── raw/                           # 실제 원본, Git 업로드 금지
 │   └── processed/                     # 실제 metadata·청크·실패 로그, Git 업로드 금지
@@ -175,6 +196,7 @@ sprint-ai-mid-project_team3/
 ├── scripts/
 │   ├── build_chunks.py                # 실제 PDF/HWP -> 공통 chunks JSONL
 │   ├── build_metadata.py              # 원본 CSV -> 표준 metadata.csv·청크 metadata 보강
+│   ├── build_hwp_tables.py            # HWP 본문 표 -> hwp_table_documents.jsonl
 │   ├── validate_chunk_contract.py     # 청크·SearchResult 공통 계약 검증
 │   └── build_api_vectordb.py          # OpenAI 임베딩 -> OpenAI Chroma DB
 ├── src/
@@ -187,7 +209,9 @@ sprint-ai-mid-project_team3/
 ├── notebook/
 │   ├── 00_data_inspection.ipynb        # 원본 메타데이터·파일 매칭 확인
 │   ├── 01_parser_chunker_test.ipynb    # PDF/HWP 추출·청킹 확인
-│   └── 05_chunk_contract_test.ipynb    # 실제·샘플 청크 계약 검증
+│   ├── 05_chunk_contract_test.ipynb    # 실제·샘플 청크 계약 검증
+│   ├── 07_vision_model_comparison.ipynb      # gpt-5-mini vs gpt-5-nano
+│   └── 08_extraction_path_comparison.ipynb   # 추출 경로별 결과와 원본 대조
 ├── api_main.py                        # 공통 실행 진입점
 ├── gcp_main.py                        # 로컬 Retrieval 실행 진입점
 └── evaluate.py                        # 프로필별 평가
@@ -333,6 +357,9 @@ OpenAI와 Local Retriever가 완성된 뒤 notebook/04_evaluation.ipynb에서 �
 - `retrieval.profiles.*.embedding_model`: 각 담당자가 선정한 임베딩 모델
 - `retrieval.profiles.*.persist_directory`, `collection_name`: Retriever별 공유 Chroma DB 저장 위치와 컬렉션 이름
 - `generation.provider`, `generation.model`: Generation 담당자가 선정한 LLM
+- `multimodal.extraction_mode`: `paddle_qwen`, `paddle_openai`, `openai_only` 중 선택
+- `hwp_table.min_rows`, `min_columns`, `min_density`: HWP 표를 내용으로 볼지 판단하는 기준
+- `multimodal.openai_model`, `openai_max_output_tokens`, `openai_reasoning_effort`, `openai_image_detail`: OpenAI 비전 호출 옵션
 
 모델명과 실험값은 코드에 직접 적지 않고 설정 파일과 실험 기록에 남깁니다.
 실행 환경 경로(가상환경 python 경로, 모델 캐시 경로 등)도 코드에 직접 적지 않고 설정 파일에서 읽습니다.

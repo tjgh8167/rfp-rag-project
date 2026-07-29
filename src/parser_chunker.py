@@ -10,7 +10,10 @@ from pypdf import PdfReader
 
 
 HWP_PARA_TEXT_TAG = 67
+HWP_LIST_HEADER_TAG = 72
 HWP_TABLE_TAG = 77
+# 표 셀의 LIST_HEADER는 공통 헤더 8바이트 뒤에 열·행·가로병합·세로병합이 2바이트씩 이어집니다.
+HWP_CELL_POSITION_OFFSET = 8
 HWP_IMAGE_SUFFIXES = {'.bmp', '.emf', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.tif', '.tiff', '.wmf'}
 HWP_SINGLE_CONTROL_CHARS = {9, 10, 13, 24, 30, 31}
 CHUNK_REQUIRED_FIELDS = ("chunk_id", "doc_id", "text", "metadata")
@@ -72,6 +75,7 @@ def _iter_hwp_body_records(hwp: olefile.OleFileIO, compressed: bool):
             record_header = int.from_bytes(section[position : position + 4], "little")
             position += 4
             tag_id = record_header & 0x3FF
+            level = (record_header >> 10) & 0x3FF
             record_size = (record_header >> 20) & 0xFFF
 
             if record_size == 0xFFF:
@@ -82,7 +86,7 @@ def _iter_hwp_body_records(hwp: olefile.OleFileIO, compressed: bool):
 
             record = section[position : position + record_size]
             position += record_size
-            yield tag_id, record
+            yield tag_id, level, record
 
 
 # HWP 5.x 파일의 압축된 본문 스트림을 열어 텍스트를 추출합니다.
@@ -101,13 +105,119 @@ def _read_hwp(path: Path) -> str:
             raise ValueError("지원하지 않는 HWP 문서입니다.")
 
         compressed = bool(file_header[36] & 1)
-        for tag_id, record in _iter_hwp_body_records(hwp, compressed):
+        for tag_id, _level, record in _iter_hwp_body_records(hwp, compressed):
             if tag_id == HWP_PARA_TEXT_TAG:
                 paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
                 if paragraph:
                     paragraphs.append(paragraph)
 
     return "\n".join(paragraphs)
+
+
+# 표 셀의 위치와 병합 칸 수를 읽습니다. 표 셀이 아닌 목록이면 None을 반환합니다.
+def _hwp_cell_position(record: bytes) -> dict | None:
+    start = HWP_CELL_POSITION_OFFSET
+    if len(record) < start + 8:
+        return None
+    return {
+        "column": int.from_bytes(record[start : start + 2], "little"),
+        "row": int.from_bytes(record[start + 2 : start + 4], "little"),
+        "column_span": int.from_bytes(record[start + 4 : start + 6], "little"),
+        "row_span": int.from_bytes(record[start + 6 : start + 8], "little"),
+    }
+
+
+# HWP 본문에서 표를 셀 단위로 읽습니다.
+# _read_hwp는 PARA_TEXT만 가져와 표가 한 줄로 뭉개지지만, 파일에는 행·열 수와 셀 좌표가
+# 그대로 들어 있어 함께 읽으면 변환이나 인식 없이 격자를 복원할 수 있습니다.
+def extract_hwp_tables(path: str | Path) -> list[dict]:
+    path = Path(path)
+    if not olefile.isOleFile(path):
+        raise ValueError("HWP 5.x OLE 문서가 아닙니다.")
+
+    tables: list[dict] = []
+    open_tables: list[dict] = []
+
+    with olefile.OleFileIO(path) as hwp:
+        if not hwp.exists("FileHeader") or not hwp.exists("BodyText"):
+            raise ValueError("HWP FileHeader 또는 BodyText 스트림이 없습니다.")
+
+        file_header = hwp.openstream("FileHeader").read()
+        if not file_header.startswith(b"HWP Document File"):
+            raise ValueError("지원하지 않는 HWP 문서입니다.")
+
+        compressed = bool(file_header[36] & 1)
+        for tag_id, level, record in _iter_hwp_body_records(hwp, compressed):
+            # 표보다 얕은 계층이 나오면 그 표는 끝난 것으로 봅니다.
+            while open_tables and level < open_tables[-1]["level"]:
+                open_tables.pop()
+
+            if tag_id == HWP_TABLE_TAG and len(record) >= 8:
+                table = {
+                    "rows": int.from_bytes(record[4:6], "little"),
+                    "columns": int.from_bytes(record[6:8], "little"),
+                    "level": level,
+                    "depth": len(open_tables),
+                    "cells": [],
+                }
+                tables.append(table)
+                open_tables.append(table)
+                continue
+
+            if not open_tables:
+                continue
+
+            current = open_tables[-1]
+            if tag_id == HWP_LIST_HEADER_TAG:
+                position = _hwp_cell_position(record)
+                if position is not None:
+                    current["cells"].append({**position, "text": []})
+            elif tag_id == HWP_PARA_TEXT_TAG and current["cells"]:
+                paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
+                if paragraph:
+                    current["cells"][-1]["text"].append(paragraph)
+
+    for table in tables:
+        table.pop("level")
+    return tables
+
+
+# 셀에 적힌 좌표를 그대로 써서 격자에 배치합니다.
+# 순서대로 채우면 병합된 칸에서 그 뒤가 한 칸씩 밀립니다.
+# 병합된 칸은 첫 칸에만 값을 두고 나머지는 비워 원본 모양을 유지합니다.
+def hwp_table_to_markdown(table: dict) -> str:
+    rows, columns = table["rows"], table["columns"]
+    if rows <= 0 or columns <= 0:
+        return ""
+
+    grid = [["" for _ in range(columns)] for _ in range(rows)]
+    for cell in table["cells"]:
+        if cell["row"] >= rows or cell["column"] >= columns:
+            continue
+        text = " ".join(cell["text"])
+        # 좌표가 같은 셀이 드물게 있습니다. 덮어쓰면 앞의 내용이 사라지므로 이어 붙입니다.
+        seat = grid[cell["row"]][cell["column"]]
+        grid[cell["row"]][cell["column"]] = f"{seat} {text}".strip() if seat else text
+    return "\n".join("| " + " | ".join(row) + " |" for row in grid)
+
+
+# 셀 중 내용이 있는 셀의 비율입니다. 값을 적지 않은 빈 서식을 걸러낼 때 씁니다.
+# 분모는 행×열이 아니라 실제 셀 수입니다. 병합된 셀은 격자에서 여러 칸을 차지하지만
+# 셀 자체는 하나여서, 행×열로 나누면 내용이 꽉 찬 표도 밀도가 낮게 나옵니다.
+def hwp_table_density(table: dict) -> float:
+    cells = table["cells"]
+    if not cells:
+        return 0.0
+    return sum(1 for cell in cells if cell["text"]) / len(cells)
+
+
+# 청크에 넣을 만한 표인지 판단합니다.
+# HWP는 제목에 테두리를 넣거나 여백을 맞추려고 1행·1열 표를 자주 쓰고,
+# 값을 적지 않은 빈 서식은 검색 근거가 되지 못합니다.
+def is_hwp_content_table(table: dict, min_rows: int, min_columns: int, min_density: float) -> bool:
+    if table["rows"] < min_rows or table["columns"] < min_columns:
+        return False
+    return hwp_table_density(table) >= min_density
 
 
 # PDF의 표·이미지·텍스트 추출 상태를 점검해 추가 추출 검토 후보를 찾습니다.
@@ -203,7 +313,7 @@ def inspect_hwp_visual_content(path: str | Path) -> dict:
         compressed = bool(file_header[36] & 1)
         table_count = sum(
             tag_id == HWP_TABLE_TAG
-            for tag_id, _ in _iter_hwp_body_records(hwp, compressed)
+            for tag_id, _level, _record in _iter_hwp_body_records(hwp, compressed)
         )
         image_stream_paths = [
             "/".join(stream_path)

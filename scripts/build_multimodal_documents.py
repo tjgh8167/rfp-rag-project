@@ -1,4 +1,5 @@
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -72,6 +73,131 @@ def image_type(vlm_text: str) -> str:
     return match.group(1).lower() if match else "other"
 
 
+# Qwen과 OpenAI가 완전히 같은 지시문을 쓰도록 분리한다. 두 방식을 비교하려면 프롬프트가 동일해야 한다.
+def vlm_instruction(ocr_text: str | None) -> str:
+    ocr_section = f"이미지에서 PaddleOCR로 추출한 정확한 텍스트:\n---\n{ocr_text}\n---\n\n" if ocr_text else ""
+    return ocr_section + (
+        "위 텍스트와 이미지를 함께 참고하세요.\n"
+        "유형 기준:\n"
+        "- diagram: 상자/요소가 화살표나 선으로 연결된 순서도/구성도/조직도\n"
+        "- table: 행과 열 격자에 값이 채워진 표\n"
+        "- form: 항목과 입력란이 있는 서식/양식 문서\n"
+        "- chart: 막대/선/원 등으로 수치를 나타낸 그래프나 워드클라우드\n"
+        "- logo: 기관/서비스 로고나 심볼\n"
+        "- photo: 실사 사진이나 지도\n"
+        "- other: 위에 해당하지 않는 것\n"
+        "규칙: 위 텍스트와 이미지에 실제로 보이는 것만 근거로 삼으세요. "
+        "이미지에 없는 정보(수치, 기술 용어, 관계, 의도)를 지어내지 마세요. 확실하지 않으면 그 부분은 쓰지 마세요.\n\n"
+        "반드시 아래 두 줄 형식으로만 답하세요. 두 줄 모두 채우세요.\n"
+        "유형: <diagram|table|form|chart|logo|photo|other 중 하나>\n"
+        "요약: <이 이미지에 무엇이 담겨 있는지 한국어 한 문장>"
+    )
+
+
+class OpenAIVisionExtractor:
+    """VLM 단계만 OpenAI 비전 모델로 대체한다. OCR과 공간 배치는 PaddleOCR 결과를 그대로 쓴다."""
+
+    def __init__(self, options: dict):
+        from dotenv import load_dotenv
+        from openai import OpenAI
+
+        load_dotenv()
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("OPENAI_API_KEY가 .env에 없습니다.")
+        self.client = OpenAI()
+        self.model = options["openai_model"]
+        self.max_output_tokens = options["openai_max_output_tokens"]
+        self.detail = options["openai_image_detail"]
+        self.reasoning_effort = options["openai_reasoning_effort"]
+        # 비용 비교에 쓰려고 호출 단위 토큰 사용량을 누적한다.
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def image_content(self, image_path: str) -> dict:
+        suffix = Path(image_path).suffix.lower().lstrip(".") or "png"
+        mime = "jpeg" if suffix in {"jpg", "jpeg"} else suffix
+        encoded = base64.b64encode(Path(image_path).read_bytes()).decode()
+        return {
+            "type": "input_image",
+            "image_url": f"data:image/{mime};base64,{encoded}",
+            "detail": self.detail,
+        }
+
+    def extract_vlm(self, image_path: str, ocr_text: str | None = None) -> str:
+        response = self.client.responses.create(
+            model=self.model,
+            max_output_tokens=self.max_output_tokens,
+            reasoning={"effort": self.reasoning_effort},
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        self.image_content(image_path),
+                        {"type": "input_text", "text": vlm_instruction(ocr_text)},
+                    ],
+                }
+            ],
+        )
+        if response.usage is not None:
+            self.input_tokens += response.usage.input_tokens
+            self.output_tokens += response.usage.output_tokens
+        return response.output_text.strip()
+
+    # PaddleOCR 없이 글자·표 구조·유형·요약을 한 번의 호출로 받는다.
+    def extract_full(self, image_path: str) -> dict:
+        response = self.client.responses.create(
+            model=self.model,
+            max_output_tokens=self.max_output_tokens,
+            reasoning={"effort": self.reasoning_effort},
+            text={"format": OPENAI_ONLY_SCHEMA},
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        self.image_content(image_path),
+                        {"type": "input_text", "text": OPENAI_ONLY_INSTRUCTION},
+                    ],
+                }
+            ],
+        )
+        if response.usage is not None:
+            self.input_tokens += response.usage.input_tokens
+            self.output_tokens += response.usage.output_tokens
+        return json.loads(response.output_text)
+
+
+# OpenAI 단독 추출용. PaddleOCR 없이 글자와 표 구조까지 한 번에 받는다.
+OPENAI_ONLY_INSTRUCTION = (
+    "이 이미지에서 보이는 것을 그대로 추출하세요.\n"
+    "- text: 이미지 안의 모든 글자를 보이는 순서대로 옮기세요. "
+    "표가 있으면 마크다운 표(| 구분)로 행과 열을 살려서 적으세요. 글자가 없으면 빈 문자열로 두세요.\n"
+    "- image_type: diagram(화살표/선으로 연결된 순서도·구성도·조직도), table(행과 열 격자의 표), "
+    "form(항목과 입력란이 있는 서식), chart(그래프·워드클라우드), logo(로고·심볼), "
+    "photo(실사 사진·지도), other 중 하나\n"
+    "- summary: 이 이미지에 무엇이 담겨 있는지 한국어 한 문장\n"
+    "규칙: 이미지에 실제로 보이는 것만 적으세요. 보이지 않는 수치, 용어, 관계를 지어내지 마세요."
+)
+
+OPENAI_ONLY_SCHEMA = {
+    "type": "json_schema",
+    "name": "image_extraction",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "image_type": {
+                "type": "string",
+                "enum": ["diagram", "table", "form", "chart", "logo", "photo", "other"],
+            },
+            "summary": {"type": "string"},
+        },
+        "required": ["text", "image_type", "summary"],
+        "additionalProperties": False,
+    },
+}
+
+
 def ocr_items(result: dict) -> list[dict]:
     items=[]
     for text, box in zip(result["rec_texts"], result["rec_boxes"]):
@@ -118,9 +244,30 @@ class MultimodalExtractor:
     def __init__(self, options: dict):
         # 무거운 라이브러리를 import하기 전에 모델 캐시 경로를 확정한다.
         os.environ["HF_HOME"] = options["model_cache_path"]
+        # openai_only는 PaddleOCR을 쓰지 않으므로 무거운 import 자체를 건너뛴다.
+        self.ocr = None if options["extraction_mode"] == "openai_only" else self.load_paddle(options)
+        self.options = options
+        self.model_name = options["model"]
+        self.gap_multiplier = options["layout_row_gap_multiplier"]
+        self.model=None
+        self.processor=None
+        # extraction_mode에 따라 어느 단계를 OpenAI로 넘길지 정한다.
+        self.mode = options["extraction_mode"]
+        self.openai_only = self.mode == "openai_only"
+        self.openai_vlm = (
+            OpenAIVisionExtractor(options) if self.mode in {"paddle_openai", "openai_only"} else None
+        )
+        self.vlm_model_name = options["openai_model"] if self.openai_vlm else options["model"]
+        self.ocr_engine_name = (
+            options["openai_model"] if self.openai_only else f"PaddleOCR {options['paddle_ocr_version']}"
+        )
+        # openai_only는 호출 1회로 글자와 요약을 함께 받으므로 결과를 두 단계가 나눠 쓴다.
+        self.full_result: dict | None = None
+
+    def load_paddle(self, options: dict):
         from paddleocr import PaddleOCR
 
-        self.ocr = PaddleOCR(
+        return PaddleOCR(
             lang=options["paddle_language"],
             ocr_version=options["paddle_ocr_version"],
             use_doc_orientation_classify=options["paddle_use_doc_orientation_classify"],
@@ -128,13 +275,11 @@ class MultimodalExtractor:
             use_textline_orientation=options["paddle_use_textline_orientation"],
             device=options["paddle_device"],
         )
-        self.options = options
-        self.model_name = options["model"]
-        self.gap_multiplier = options["layout_row_gap_multiplier"]
-        self.model=None
-        self.processor=None
 
     def extract_ocr(self, image_path: str) -> tuple[str, dict]:
+        if self.openai_only:
+            self.full_result = self.openai_vlm.extract_full(image_path)
+            return self.full_result["text"].strip(), {}
         result=self.ocr.predict(image_path)[0]
         return "\n".join(result["rec_texts"]).strip(), spatial_layout(ocr_items(result), self.gap_multiplier)
 
@@ -158,24 +303,12 @@ class MultimodalExtractor:
         self.processor=AutoProcessor.from_pretrained(self.model_name)
 
     def extract_vlm(self, image_path: str, ocr_text: str | None = None) -> str:
+        if self.openai_only:
+            return f"유형: {self.full_result['image_type']}\n요약: {self.full_result['summary']}"
+        if self.openai_vlm is not None:
+            return self.openai_vlm.extract_vlm(image_path, ocr_text)
         self.load_vlm()
-        ocr_section = f"이미지에서 PaddleOCR로 추출한 정확한 텍스트:\n---\n{ocr_text}\n---\n\n" if ocr_text else ""
-        instruction = ocr_section + (
-            "위 텍스트와 이미지를 함께 참고하세요.\n"
-            "유형 기준:\n"
-            "- diagram: 상자/요소가 화살표나 선으로 연결된 순서도/구성도/조직도\n"
-            "- table: 행과 열 격자에 값이 채워진 표\n"
-            "- form: 항목과 입력란이 있는 서식/양식 문서\n"
-            "- chart: 막대/선/원 등으로 수치를 나타낸 그래프나 워드클라우드\n"
-            "- logo: 기관/서비스 로고나 심볼\n"
-            "- photo: 실사 사진이나 지도\n"
-            "- other: 위에 해당하지 않는 것\n"
-            "규칙: 위 텍스트와 이미지에 실제로 보이는 것만 근거로 삼으세요. "
-            "이미지에 없는 정보(수치, 기술 용어, 관계, 의도)를 지어내지 마세요. 확실하지 않으면 그 부분은 쓰지 마세요.\n\n"
-            "반드시 아래 두 줄 형식으로만 답하세요. 두 줄 모두 채우세요.\n"
-            "유형: <diagram|table|form|chart|logo|photo|other 중 하나>\n"
-            "요약: <이 이미지에 무엇이 담겨 있는지 한국어 한 문장>"
-        )
+        instruction = vlm_instruction(ocr_text)
         messages = [{"role": "user", "content": [
             {"type": "image", "image": f"file://{image_path}"},
             {"type": "text", "text": instruction},
@@ -318,11 +451,11 @@ def main() -> None:
                         "image_sha256": image_hash,
                         "width": width,
                         "height": height,
-                        "ocr_engine": f"PaddleOCR {options['paddle_ocr_version']}",
+                        "ocr_engine": extractor.ocr_engine_name,
                         "ocr_text": ocr_text,
                         "spatial_layout": layout,
                         "combined_context": combined_context(ocr_text, layout, vlm_text),
-                        "vlm_model": options["model"],
+                        "vlm_model": extractor.vlm_model_name,
                         "vlm_status": vlm_status,
                         "image_type": detected_type,
                         "vlm_text": vlm_text,
