@@ -127,11 +127,12 @@ class HybridRetriever:
         
         # candidate_count 만큼 예비 후보 추출
         dense_results = self.dense_retriever.search(
-            query=query, 
+            query=query,
             top_k=self.candidate_count, 
             filters=filters, 
-            _is_hybrid_internal=True 
-        )
+            _is_hybrid_internal = True,
+            _is_rerank_internal = True 
+            )
 
         sparse_results = self.sparse_retriever.search(
             query=query,
