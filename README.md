@@ -99,14 +99,17 @@ RFP 문서 → 파싱·청킹 → chunks_800_120.jsonl → 임베딩·Chroma 검
 
 ### OCR·표·이미지 추출 결과 병합 규칙
 
-이미지와 표에서 추출한 결과는 원문 텍스트보다 정확도 편차가 큽니다. 따라서 원문 청크와 분리하여 관리하고, 검토를 통과한 결과만 별도 청크로 추가합니다.
+추출 결과는 처음에는 `review_required`로 분리 보관만 했으나, 이슈 #84에서 검색에 반영했습니다. 표·이미지가 청크에 들어가면서 공통질문 키워드 적중률이 59.8%에서 65.0%로, 이슈 #22의 절 제목까지 더해 74.4%로 올랐습니다.
 
-- 추출 결과는 `chunks_800_120.jsonl`에 자동으로 병합하지 않습니다. `review_required: true`를 붙여 `/data/processed/table_documents.jsonl`, `/data/processed/multimodal_documents.jsonl`에 별도 보관합니다.
-- 원문 청크는 수정하지 않습니다. 검토를 통과한 결과만 **별도 청크로 추가**하며, 원문 청크와 한 청크에 섞지 않습니다.
-- 추가되는 청크도 위 청크·metadata 계약을 그대로 따릅니다. `chunk_id`는 원문과 충돌하지 않도록 `doc_001_table_0001`(표), `doc_001_img_0001`(이미지) 형식을 사용합니다.
-- 청크 출처는 `metadata.chunk_source`로 구분합니다. 값은 `table`, `image`이며 원문 청크에는 이 키가 없습니다. 이미지의 세부 유형은 `image_type`(diagram, table, form, chart, logo, photo, other)에 별도로 기록합니다.
+- 본문·표·이미지를 **하나의 청크 JSONL**에 담습니다. 자르는 방식만 다르고 저장은 한 파일입니다.
+  본문은 글자 수(800/120), 표는 행 단위, 이미지는 한 장에 한 청크입니다.
+- `chunk_id`는 원문과 충돌하지 않도록 `doc_001_chunk_0001`(본문), `doc_001_table_0001`(표), `doc_001_img_0001`(이미지) 형식을 씁니다.
+- 청크 출처는 `metadata.chunk_source`로 구분합니다. 값은 `table`, `image`이며 본문 청크에는 이 키가 없습니다. 이미지의 세부 유형은 `image_type`(diagram, table, form, chart, logo, photo, other)에 기록합니다.
+- **본문에서 표 내용을 제외합니다.** 표가 본문과 표 청크에 두 벌로 들어가지 않게 하기 위해서입니다. 다만 장·절 제목 상자는 본문에 남깁니다. 빼면 목차가 어디에도 남지 않습니다.
+- 표는 `chunk_text()`를 쓰지 않습니다. 줄바꿈을 공백으로 합쳐 격자가 무너지기 때문입니다. 행 경계에서 자르고, 잘린 청크마다 헤더 행을 반복합니다.
+- 이미지 청크는 첫 줄에 유형과 요약을 세웁니다. 뒤따르는 OCR 결과가 낱말 나열이라 그것만으로는 문장 질문과 임베딩 거리가 멉니다.
 - metadata 값은 문자열·숫자 등 단순 타입만 사용합니다. `spatial_layout` 같은 중첩 구조는 Chroma metadata에 저장할 수 없으므로 청크 metadata에 넣지 않고, 문자열로 변환한 내용을 `text`에 포함합니다.
-- 원문 청크가 변경되지 않으므로 재청킹과 전체 재임베딩은 하지 않습니다. 추가된 청크만 Vector DB에 반영하며, Retriever와 Generation 코드는 수정하지 않습니다.
+- 기존 청크는 그대로 두고 새 파일로 만듭니다. 적용 단계별 효과를 비교해야 하기 때문입니다. 전환은 `paths.chunks` 값만 바꾸면 되고 코드 수정은 필요 없으나, **Vector DB는 다시 만들어야 합니다.**
 
 **채택 기준**
 
@@ -182,47 +185,78 @@ sprint-ai-mid-project_team3/
 ├── README.md
 ├── .gitignore
 ├── config/
-│   └── default.yaml
+│   └── default.yaml                   # 경로·청킹·검색·생성·추출 설정을 한곳에서 관리
 ├── docs/
 │   ├── chunks_schema.md               # 청크·SearchResult 공통 계약
 │   ├── metadata_schema.md             # 표준 metadata.csv 및 청크 metadata 규격
-│   └── experiment_log_image_extraction.md  # 이미지·표 추출 방식 비교 기록
+│   ├── experiment_log.md              # Retrieval 실험 기록
+│   ├── experiment_log_generation.md   # 모델·max_tokens·reasoning_effort 비교
+│   ├── experiment_log_image_extraction.md  # 이미지 추출 3방식, mini vs nano 비교
+│   └── experiment_log_chunking.md     # 청크 4세트 비교
 ├── data/
 │   ├── raw/                           # 실제 원본, Git 업로드 금지
-│   └── processed/                     # 실제 metadata·청크·실패 로그, Git 업로드 금지
+│   ├── processed/                     # 실제 metadata·청크·실패 로그, Git 업로드 금지
+│   └── evaluation/questions.jsonl     # 공통 평가 질문 13문항
 ├── samples/
 │   ├── raw/sample_rfp.txt             # 병렬 개발용 가상 RFP
 │   └── processed/sample_chunks.jsonl
 ├── scripts/
-│   ├── build_chunks.py                # 실제 PDF/HWP -> 공통 chunks JSONL
 │   ├── build_metadata.py              # 원본 CSV -> 표준 metadata.csv·청크 metadata 보강
-│   ├── build_hwp_tables.py            # HWP 본문 표 -> hwp_table_documents.jsonl
+│   ├── build_clean_documents.py       # 원본 -> 클리닝 본문. --exclude-tables로 표 제외본 생성
+│   ├── build_chunks.py                # 클리닝 본문 -> 기존 방식 chunks JSONL
+│   ├── build_ocr_documents.py         # 이미지 OCR(Tesseract) -> ocr_documents.jsonl
+│   ├── build_table_ocr.py             # PDF 표(PyMuPDF)·이미지 표 OCR -> table_documents.jsonl
+│   ├── build_hwp_tables.py            # HWP 본문 표 직접 파싱 -> hwp_table_documents.jsonl
+│   ├── build_multimodal_documents.py  # 이미지 추출(OpenAI 비전 / PaddleOCR+Qwen)
+│   ├── build_extraction_chunks.py     # 본문·표·이미지 -> 통합 청크 JSONL
 │   ├── validate_chunk_contract.py     # 청크·SearchResult 공통 계약 검증
 │   └── build_api_vectordb.py          # OpenAI 임베딩 -> OpenAI Chroma DB
 ├── src/
-│   ├── parser_chunker.py              # Data 담당
+│   ├── parser_chunker.py              # 문서 읽기, HWP 표 파싱, 청킹 (Data)
+│   ├── text_cleaner.py                # 본문 클리닝과 핵심 정보 보존 검증 (Data)
+│   ├── ocr_extractor.py               # 문서에서 이미지 추출과 OCR (Data)
+│   ├── table_extractor.py             # PDF 표 추출과 이미지 표 격자 탐지 (Data)
 │   ├── retriever.py                   # 공통 결과 형식과 baseline
 │   ├── retriever_factory.py           # Retrieval 프로필 선택
 │   ├── openai_chroma_retriever.py     # Retrieval 1 담당
+│   ├── hybrid_search.py               # BM25 + 임베딩 하이브리드 검색 (Retrieval 1)
 │   ├── local_chroma_retriever.py      # Retrieval 2 담당
-│   └── rag_engine.py                  # Generation 담당
+│   └── rag_engine.py                  # 프롬프트·LLM 호출·Tool Calling·답변 생성 (Generation)
 ├── notebook/
-│   ├── 00_data_inspection.ipynb        # 원본 메타데이터·파일 매칭 확인
-│   ├── 01_parser_chunker_test.ipynb    # PDF/HWP 추출·청킹 확인
-│   ├── 05_chunk_contract_test.ipynb    # 실제·샘플 청크 계약 검증
-│   ├── 07_vision_model_comparison.ipynb      # gpt-5-mini vs gpt-5-nano
-│   └── 08_extraction_path_comparison.ipynb   # 추출 경로별 결과와 원본 대조
+│   ├── 00_data_inspection.ipynb       # 원본 메타데이터·파일 매칭 확인
+│   ├── 01_parser_chunker_test.ipynb   # PDF/HWP 추출·청킹 확인
+│   ├── 02_retrieval_openai_test.ipynb # OpenAI 검색·MMR·하이브리드 실험
+│   ├── 03_generation_test.ipynb       # 모델·파라미터 비교
+│   ├── 04_evaluation.ipynb            # 프로필별 평가
+│   ├── 05_chunk_contract_test.ipynb   # 청크 계약 검증
+│   ├── 05_ocr_extraction_test.ipynb   # OCR·표 추출 결과 확인
+│   ├── 06_multimodal_extract_test.ipynb    # 이미지 5종 OCR·공간배치·VLM 비교
+│   ├── 06_tool_calling_test.ipynb     # 숫자 계산 Tool Calling 검증
+│   ├── 07_vision_model_comparison.ipynb    # gpt-5-mini vs gpt-5-nano
+│   ├── 08_extraction_path_comparison.ipynb # PDF 표·HWP 표·이미지 결과와 원본 대조
+│   ├── 09_chunk_comparison.ipynb      # 추출 미적용 vs 적용 청크 비교
+│   └── 10_section_title_comparison.ipynb   # 청크 4세트 비교
 ├── api_main.py                        # 공통 실행 진입점
 ├── gcp_main.py                        # 로컬 Retrieval 실행 진입점
 └── evaluate.py                        # 프로필별 평가
 ```
 
-Vector DB는 Git에 올리지 않고 VM 공유 경로에 분리해 저장합니다.
+산출물은 모두 `/data/processed`에 두고 Git에 올리지 않습니다.
 
 ```text
-/data/processed/vector_db/
-├── openai/
-└── local/
+/data/processed/
+├── cleaned_documents.jsonl            # 클리닝 본문
+├── cleaned_documents_no_table.jsonl   # 표를 제외한 클리닝 본문
+├── table_documents.jsonl              # PDF 표·이미지 표
+├── hwp_table_documents.jsonl          # HWP 본문 표
+├── multimodal_documents.jsonl         # 이미지 추출 결과
+├── chunks_800_120.jsonl               # 추출 미적용 청크
+├── chunks_extraction_800_120.jsonl    # 표·이미지 적용 청크
+├── chunks_section_800_120.jsonl       # 위에 절 제목까지 적용 (채택안)
+├── *_report.csv                       # 단계별 처리 기록(제외·실패 사유 포함)
+└── vector_db/
+    ├── openai/
+    └── local/
 ```
 
 ## 7. 실행 방법
@@ -242,6 +276,26 @@ python scripts/validate_chunk_contract.py
 ```
 
 `validate_chunk_contract.py`는 필수 최상위 필드, 필수 metadata 필드, baseline `SearchResult` 형식을 확인합니다. 실제 청크 검증은 `notebook/05_chunk_contract_test.ipynb`에서도 확인할 수 있습니다.
+
+표와 이미지를 청크에 반영할 때는 아래 순서로 실행합니다.
+
+```bash
+python -m scripts.build_clean_documents --exclude-tables
+python -m scripts.build_table_ocr
+python -m scripts.build_hwp_tables
+```
+
+이미지 추출은 PaddleOCR·transformers가 설치된 개인 가상환경에서 실행합니다. 경로는 `multimodal.python_path`에 있습니다.
+
+```bash
+~/venvs/sprint-ai-multimodal/bin/python -m scripts.build_multimodal_documents
+```
+
+마지막으로 본문·표·이미지를 하나의 청크로 합칩니다. `chunking.use_section_titles` 값에 따라 저장 경로가 갈립니다.
+
+```bash
+python -m scripts.build_extraction_chunks
+```
 
 현재 동작하는 최소 End-to-End baseline:
 
@@ -335,9 +389,19 @@ python api_main.py --interactive
 2. Data 담당이 실제 PDF/HWP를 공통 `chunks_800_120.jsonl`로 변환합니다.
 3. Retrieval 1과 Retrieval 2가 각자 기본 유사도 검색을 병렬 구현합니다.
 4. Generation 담당이 공통 검색 결과로 근거 기반 답변을 생성합니다.
-5. 같은 평가 질문으로 OpenAI와 로컬 Retrieval의 검색 품질·속도·비용을 비교합니다.
+5. Data 담당이 본문에서 유실되던 표·이미지를 추출해 청크에 반영합니다.
 6. MMR, Hybrid Search, Re-ranking을 추가 실험합니다.
-7. 검색 품질, 답변 품질, 응답 속도, 비용을 종합해 최종 조합을 선정합니다.
+7. 같은 평가 질문으로 프로필별 검색 품질·속도·비용을 비교합니다.
+8. 검색 품질, 답변 품질, 응답 속도, 비용을 종합해 최종 조합을 선정합니다.
+
+각 파트의 실험 과정과 선택 근거는 `docs/experiment_log_*.md`에 남깁니다. 파트별 담당 문서는 아래와 같습니다.
+
+| 문서 | 담당 | 내용 |
+| :--- | :--- | :--- |
+| `experiment_log.md` | Retrieval | 검색 기법 비교 |
+| `experiment_log_generation.md` | Generation | 모델·max_tokens·reasoning_effort 비교 |
+| `experiment_log_image_extraction.md` | Data | 이미지 추출 3방식, gpt-5-mini vs nano |
+| `experiment_log_chunking.md` | Data | 청크 4세트 비교 |
 
 ### 공통 평가 질문
 
@@ -350,13 +414,17 @@ OpenAI와 Local Retriever가 완성된 뒤 notebook/04_evaluation.ipynb에서 �
 공통 설정은 `config/default.yaml`에서 관리합니다.
 
 - `paths.metadata`, `paths.normalized_metadata`, `paths.raw_documents`, `paths.chunks`: 실제 데이터와 산출물 경로
-- `chunking.chunk_size`, `chunking.chunk_overlap`: 청크 크기와 중첩
+- `chunking.chunk_size`, `chunking.chunk_overlap`: 본문 청크 크기와 중첩
+- `chunking.table_chunk_size`, `image_chunk_size`: 표·이미지 청크 최대 크기
+- `chunking.use_section_titles`: 절 경계를 존중하고 청크마다 장·절 제목을 붙일지 (채택)
+- `chunking.use_table_headline`: 표 청크 첫 줄에 기관명·사업명을 붙일지 (기각, 근거는 주석 참고)
+- `chunking.max_section_title_length`: 1행 표 중 이 길이 이하만 절 제목으로 인정
 - `retrieval.active_profile`: `baseline`, `openai`, `local`
 - `retrieval.top_k`: 반환할 청크 수
 - `retrieval.search_method`: `similarity`, 이후 `mmr`, `hybrid`, `rerank`
 - `retrieval.profiles.*.embedding_model`: 각 담당자가 선정한 임베딩 모델
 - `retrieval.profiles.*.persist_directory`, `collection_name`: Retriever별 공유 Chroma DB 저장 위치와 컬렉션 이름
-- `generation.provider`, `generation.model`: Generation 담당자가 선정한 LLM
+- `generation.provider`, `generation.model`, `max_tokens`, `reasoning_effort`: Generation 담당자가 선정한 LLM과 호출 옵션
 - `multimodal.extraction_mode`: `paddle_qwen`, `paddle_openai`, `openai_only` 중 선택
 - `hwp_table.min_rows`, `min_columns`, `min_density`: HWP 표를 내용으로 볼지 판단하는 기준
 - `multimodal.openai_model`, `openai_max_output_tokens`, `openai_reasoning_effort`, `openai_image_detail`: OpenAI 비전 호출 옵션
@@ -387,9 +455,14 @@ model_name = config["embedding_model"]
 원본 문서나 메타데이터가 추가·수정되면 아래 순서로 처리합니다.
 
 1. `build_metadata.py`로 표준 `metadata.csv`와 청크 metadata를 갱신합니다.
-2. `build_chunks.py`로 `paths.chunks`에 설정된 실제 청크 JSONL을 생성합니다.
-3. 계약 검증 스크립트 또는 `05_chunk_contract_test.ipynb`로 필수 필드를 확인합니다.
-4. Retriever 담당자가 변경된 청크와 설정을 기준으로 각자의 Chroma DB를 다시 생성합니다.
+2. `build_clean_documents.py --exclude-tables`로 표를 제외한 클리닝 본문을 만듭니다.
+3. `build_table_ocr.py`, `build_hwp_tables.py`, `build_multimodal_documents.py`로 표와 이미지를 추출합니다.
+   이미지 추출은 개인 가상환경이 필요합니다(`multimodal.python_path` 참고).
+4. `build_extraction_chunks.py`로 본문·표·이미지를 하나의 청크 JSONL로 만듭니다.
+5. 계약 검증 스크립트 또는 `05_chunk_contract_test.ipynb`로 필수 필드를 확인합니다.
+6. Retriever 담당자가 변경된 청크와 설정을 기준으로 각자의 Chroma DB를 다시 생성합니다.
+
+추출 없이 본문만 쓰는 기존 방식은 `build_chunks.py`를 그대로 씁니다. 두 산출물은 파일이 달라 서로 덮어쓰지 않습니다.
 
 원본 RFP, 실제 청크, Vector DB는 Git이 아닌 VM 공유 경로에서만 관리합니다.
 
@@ -398,6 +471,8 @@ model_name = config["embedding_model"]
 ### 브랜치
 
 브랜치 이름은 `이슈번호-역할-작업내용` 형식으로 작성합니다.
+여기서 이슈번호는 GitHub 이슈 번호가 아니라 **이슈 제목 앞의 작업 번호**입니다.
+예를 들어 GitHub 이슈 #84의 제목이 `41. [Data] 표 마크다운을 청크에 반영`이면 브랜치는 `41-data-table-chunks`입니다.
 
 ```text
 3-data-pdf-hwp-parser
@@ -405,6 +480,8 @@ model_name = config["embedding_model"]
 17-retrieval2-local-chroma
 8-generation-rag-prompt
 ```
+
+앞선 작업 위에 이어서 진행해야 하면 그 브랜치에서 새 브랜치를 땁니다. PR을 올릴 때 base를 main이 아니라 그 브랜치로 지정하면 이번 작업만 diff에 나오고, 앞선 PR이 머지되면 base가 자동으로 main으로 바뀝니다.
 
 ### PR
 
@@ -421,6 +498,8 @@ model_name = config["embedding_model"]
 - 수정 요청을 반영한 뒤 다시 리뷰를 요청합니다.
 
 ### 저장 금지 항목
+
+`.env`의 API 키는 코드에 직접 적지 않고 `load_dotenv()`로 읽습니다. `.env`는 `.gitignore` 대상입니다.
 
 원본 RFP, 대용량 추출 데이터, Vector DB, `.env`, API 키, 모델 파일, 가상환경, GCP·SSH 키는 Git에 올리지 않습니다.
 

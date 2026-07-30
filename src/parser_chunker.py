@@ -166,6 +166,90 @@ def _read_hwp(
     return "\n".join(paragraphs)
 
 
+# 본문을 절 단위로 읽습니다. 표 청크로 가지 않는 표(장·절 제목 상자)를 경계로 삼습니다.
+# 제목이 붙어 있어야 청크만 보고도 어느 항목인지 알 수 있습니다.
+def read_hwp_sections(
+    path: str | Path,
+    table_options: dict,
+    max_title_length: int,
+) -> list[dict]:
+    path = Path(path)
+    if not olefile.isOleFile(path):
+        raise ValueError("HWP 5.x OLE 문서가 아닙니다.")
+
+    sections = [{"title": "", "text": []}]
+
+    def flush_section_table(table: dict) -> None:
+        if is_hwp_content_table(
+            table,
+            table_options["min_rows"],
+            table_options["min_columns"],
+            table_options["min_density"],
+        ):
+            return
+        text = " ".join(
+            " ".join(cell["text"]) for cell in table["cells"] if cell["text"]
+        ).strip()
+        if not text:
+            return
+        # 조직도나 실적표도 1행 표로 만드는 문서가 있습니다.
+        # 절이 바뀐 것은 맞으므로 경계로는 쓰되, 제목으로는 짧은 것만 씁니다.
+        sections.append({"title": text if len(text) <= max_title_length else "", "text": []})
+        if len(text) > max_title_length:
+            sections[-1]["text"].append(text)
+
+    open_tables: list[dict] = []
+
+    with olefile.OleFileIO(path) as hwp:
+        if not hwp.exists("FileHeader") or not hwp.exists("BodyText"):
+            raise ValueError("HWP FileHeader 또는 BodyText 스트림이 없습니다.")
+
+        file_header = hwp.openstream("FileHeader").read()
+        if not file_header.startswith(b"HWP Document File"):
+            raise ValueError("지원하지 않는 HWP 문서입니다.")
+
+        compressed = bool(file_header[36] & 1)
+        for tag_id, level, record in _iter_hwp_body_records(hwp, compressed):
+            while open_tables and level < open_tables[-1]["level"]:
+                flush_section_table(open_tables.pop())
+            if tag_id == HWP_TABLE_TAG and len(record) >= 8:
+                open_tables.append(
+                    {
+                        "rows": int.from_bytes(record[4:6], "little"),
+                        "columns": int.from_bytes(record[6:8], "little"),
+                        "level": level,
+                        "cells": [],
+                    }
+                )
+                continue
+
+            if open_tables:
+                current = open_tables[-1]
+                if tag_id == HWP_LIST_HEADER_TAG:
+                    position = _hwp_cell_position(record)
+                    if position is not None:
+                        current["cells"].append({**position, "text": []})
+                elif tag_id == HWP_PARA_TEXT_TAG and current["cells"]:
+                    paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
+                    if paragraph:
+                        current["cells"][-1]["text"].append(paragraph)
+                continue
+
+            if tag_id == HWP_PARA_TEXT_TAG:
+                paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
+                if paragraph:
+                    sections[-1]["text"].append(paragraph)
+
+        while open_tables:
+            flush_section_table(open_tables.pop())
+
+    return [
+        {"title": section["title"], "text": "\n".join(section["text"])}
+        for section in sections
+        if any(line.strip() for line in section["text"])
+    ]
+
+
 # 표 셀의 위치와 병합 칸 수를 읽습니다. 표 셀이 아닌 목록이면 None을 반환합니다.
 def _hwp_cell_position(record: bytes) -> dict | None:
     start = HWP_CELL_POSITION_OFFSET

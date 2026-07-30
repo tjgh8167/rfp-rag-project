@@ -2,11 +2,14 @@ paths:
   metadata: /data/original_data/data_list.csv
   normalized_metadata: /data/processed/metadata.csv
   raw_documents: /data/original_data/files
-  # 검색·임베딩이 읽는 청크 파일입니다. 아래 둘 중 하나를 골라 씁니다.
-  # 표·이미지 추출 적용 여부를 비교해야 하므로 두 파일 모두 유지합니다.
+  # 검색·임베딩이 읽는 청크 파일입니다. 아래 중 하나를 골라 chunks에 지정합니다.
+  # 적용 단계별 효과를 비교해야 하므로 모두 유지합니다.
   #   chunks_800_120.jsonl            추출 미적용. 본문만, 표는 뭉개져 있고 이미지 없음 (10,222개)
-  #   chunks_extraction_800_120.jsonl 추출 적용. 본문 + 표 + 이미지 (17,382개)
-  # 전환은 이 값만 바꾸면 되고 코드 수정은 필요 없습니다. 단, Vector DB는 다시 만들어야 합니다.
+  #   chunks_extraction_800_120.jsonl 표·이미지 추출 적용 (17,382개)
+  #   chunks_section_800_120.jsonl    위에 절 제목까지 적용 (18,518개, 채택안)
+  #   chunks_tablehead_800_120.jsonl  위에 표 머리말까지 적용 (18,518개, 비교용·기각)
+  # 전환은 chunks 값만 바꾸면 되고 코드 수정은 필요 없습니다. 단, Vector DB는 다시 만들어야 합니다.
+  # 각 파일을 만드는 방법은 아래 chunks_with_* 경로와 chunking의 use_* 설정을 참고하세요.
   chunks: /data/processed/chunks_800_120.jsonl
   extraction_failures: /data/processed/extraction_failures.csv
   ocr_documents: /data/processed/ocr_documents.jsonl
@@ -17,9 +20,13 @@ paths:
   table_report: /data/processed/table_report.csv
   hwp_table_documents: /data/processed/hwp_table_documents.jsonl
   hwp_table_report: /data/processed/hwp_table_report.csv
-  # 표·이미지를 반영한 청크. 비교를 위해 기존 chunks와 별도 파일로 둡니다.
   cleaned_documents_no_table: /data/processed/cleaned_documents_no_table.jsonl
+  # build_extraction_chunks가 결과를 저장할 위치입니다.
+  # chunking의 use_table_headline이 true면 chunks_with_table_headline,
+  # use_section_titles가 true면 chunks_with_section, 둘 다 false면 chunks_with_extraction에 씁니다.
   chunks_with_extraction: /data/processed/chunks_extraction_800_120.jsonl
+  chunks_with_section: /data/processed/chunks_section_800_120.jsonl
+  chunks_with_table_headline: /data/processed/chunks_tablehead_800_120.jsonl
   multimodal_documents: /data/processed/multimodal_documents.jsonl
   multimodal_report: /data/processed/multimodal_report.csv
 
@@ -33,6 +40,15 @@ chunking:
   chunk_overlap: 120
   # 표는 행이 잘리면 항목과 값의 관계가 깨지므로 글자 수가 아니라 행 경계에서 나눕니다.
   table_chunk_size: 800
+  # 절 제목을 청크 앞에 붙일지 정합니다. 효과를 비교하려고 끌 수 있게 두었습니다.
+  use_section_titles: true
+  # 표 청크 첫 줄에 기관명·사업명을 세울지 정합니다.
+  # 문서를 찾는 능력은 올라가지만(정답문서 3.31 -> 3.69) 한 문서의 표 전부에 같은 문구가 붙어
+  # 문서 안에서 어느 표인지 구분이 흐려집니다. 키워드 적중률이 74.4%에서 48.7%로 떨어져 끕니다.
+  use_table_headline: false
+  # 1행짜리 표 중 이 길이 이하만 절 제목으로 봅니다.
+  # 조직도나 실적표도 1행 표로 만드는 문서가 있어 길이로 구분합니다.
+  max_section_title_length: 40
   image_chunk_size: 800
 
 ocr:
