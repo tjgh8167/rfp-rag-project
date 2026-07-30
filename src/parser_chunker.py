@@ -178,6 +178,26 @@ def read_hwp_sections(
         raise ValueError("HWP 5.x OLE 문서가 아닙니다.")
 
     sections = [{"title": "", "text": []}]
+
+    def flush_section_table(table: dict) -> None:
+        if is_hwp_content_table(
+            table,
+            table_options["min_rows"],
+            table_options["min_columns"],
+            table_options["min_density"],
+        ):
+            return
+        text = " ".join(
+            " ".join(cell["text"]) for cell in table["cells"] if cell["text"]
+        ).strip()
+        if not text:
+            return
+        # 조직도나 실적표도 1행 표로 만드는 문서가 있습니다.
+        # 절이 바뀐 것은 맞으므로 경계로는 쓰되, 제목으로는 짧은 것만 씁니다.
+        sections.append({"title": text if len(text) <= max_title_length else "", "text": []})
+        if len(text) > max_title_length:
+            sections[-1]["text"].append(text)
+
     open_tables: list[dict] = []
 
     with olefile.OleFileIO(path) as hwp:
@@ -191,26 +211,7 @@ def read_hwp_sections(
         compressed = bool(file_header[36] & 1)
         for tag_id, level, record in _iter_hwp_body_records(hwp, compressed):
             while open_tables and level < open_tables[-1]["level"]:
-                table = open_tables.pop()
-                if is_hwp_content_table(
-                    table,
-                    table_options["min_rows"],
-                    table_options["min_columns"],
-                    table_options["min_density"],
-                ):
-                    continue
-                text = " ".join(
-                    " ".join(cell["text"]) for cell in table["cells"] if cell["text"]
-                ).strip()
-                if not text:
-                    continue
-                # 조직도나 실적표도 1행 표로 만드는 문서가 있습니다.
-                # 절이 바뀐 것은 맞으므로 경계로는 쓰되, 제목으로는 짧은 것만 씁니다.
-                sections.append({"title": text if len(text) <= max_title_length else "", "text": []})
-                if len(text) > max_title_length:
-                    sections[-1]["text"].append(text)
-                continue
-
+                flush_section_table(open_tables.pop())
             if tag_id == HWP_TABLE_TAG and len(record) >= 8:
                 open_tables.append(
                     {
@@ -238,6 +239,9 @@ def read_hwp_sections(
                 paragraph = _clean_hwp_text(record.decode("utf-16le", errors="ignore"))
                 if paragraph:
                     sections[-1]["text"].append(paragraph)
+
+        while open_tables:
+            flush_section_table(open_tables.pop())
 
     return [
         {"title": section["title"], "text": "\n".join(section["text"])}
