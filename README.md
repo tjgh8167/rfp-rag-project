@@ -508,9 +508,8 @@ model_name = config["embedding_model"]
 | 목록 | 링크 |
 | :--- | :--- |
 | GitHub Issues | [Issues](https://github.com/tjgh8167/sprint-ai-mid-project_team3/issues) |
-| GitHub Project | 팀장 Project URL 확정 후 기입 |
 | 협업일지 | [협업일지 링크](https://docs.google.com/spreadsheets/d/1LoEBOuxMkzjaf2hdq9GiLNaeNl8UUU9WKPQUzh2PhEM/edit?usp=drive_link) |
-| 보고서 작성 | [보고서 링크](https://canva.link/q0494iur016u7uq) |
+| 보고서 작성 | [보고서 링크](https://drive.google.com/drive/folders/1nHhTzy88ZzKDikf-qwXqOVFlqBSPvjL7?usp=drive_link) |
 
 ### 협업일지 Discord 알림
 
