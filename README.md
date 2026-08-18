@@ -126,7 +126,7 @@ RFP 문서에는 표와 이미지에 중요한 정보가 들어 있는 경우가
 ## 프로젝트 구조
 
 ```text
-sprint-ai-mid-project_team3-personal/
+rfp-rag-project/
 ├── api_main.py
 ├── evaluate.py
 ├── config/
