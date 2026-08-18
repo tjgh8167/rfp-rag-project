@@ -2,7 +2,7 @@
 
 ## 목적
 
-Data, Retrieval 1·2, Generation이 같은 JSON 구조를 사용한다. 실제 RFP 원문은 Git에 저장하지 않고, 청크 JSONL의 구조와 검색 결과만 이 계약의 대상으로 한다.
+Data, Retriever, Generation이 같은 JSON 구조를 사용한다. 실제 RFP 원문은 Git에 저장하지 않고, 청크 JSONL의 구조와 검색 결과만 이 계약의 대상으로 한다.
 
 ## 청크 JSONL 입력
 

@@ -2,7 +2,7 @@
 
 ## 배경
 
-이슈 #68에서 PaddleOCR + 로컬 Qwen2.5-VL로 이미지를 처리했으나 다음 문제가 확인되었습니다.
+이슈 #68에서 PaddleOCR + Qwen2.5-VL로 이미지를 처리했으나 다음 문제가 확인되었습니다.
 
 - 워드클라우드를 `table`로 오분류하고, 실행할 때마다 판정이 달라짐
 - 흐름도·구성도에서 요약 문장이 생성되지 않고 유형 단어만 출력됨
@@ -15,7 +15,7 @@
 
 | 모드 | 글자 추출 | 유형 판정·요약 |
 | :--- | :--- | :--- |
-| `paddle_qwen` | PaddleOCR | Qwen2.5-VL-3B (로컬) |
+| `paddle_qwen` | PaddleOCR | Qwen2.5-VL-3B |
 | `paddle_openai` | PaddleOCR | OpenAI 비전 |
 | `openai_only` | OpenAI 비전 | OpenAI 비전 (한 번의 호출로 함께) |
 

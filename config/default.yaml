@@ -102,13 +102,6 @@ retrieval:
       fetch_k: 100                                        # 부분 일치 검색 활용 / 100개 이상은 속도 저하, 노이즈 유입 가능성
       lambda_mult: 0.7                                    # MMR 변수 / 0.0에 가까울수록 다양성 중시, 1.0에 가까울수록 관련성 중시 / 0724 정서호
       batch_size: 1000                                    # vector DB에 데이터를 넣을 때 한 번에 처리할 데이터 수
-    local:
-      provider: huggingface
-      embedding_model: null
-      vector_db: chroma
-      persist_directory: vector_db/local
-      collection_name: bidmate_local
-
 generation:
   provider: openai
   model: gpt-5-nano          # gpt-5-mini -> gpt-5-nano
@@ -147,7 +140,7 @@ multimodal:
   bnb_4bit_compute_dtype: bfloat16
   device_map: auto
   max_new_tokens: 180
-  # openai_only(채택): 이미지 전체를 OpenAI / paddle_openai: 판정·요약만 OpenAI / paddle_qwen: PaddleOCR + 로컬 Qwen
+  # openai_only(채택): 이미지 전체를 OpenAI / paddle_openai: 판정·요약만 OpenAI / paddle_qwen: PaddleOCR + Qwen
   extraction_mode: openai_only
   openai_model: gpt-5-mini        # vlm_provider가 openai일 때 쓰는 비전 모델
   openai_max_output_tokens: 4000  # 상한값. 과금은 실제 사용량 기준(요약만 80, 전체 추출은 수백~수천)

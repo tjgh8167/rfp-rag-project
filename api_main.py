@@ -72,7 +72,7 @@ def main(default_profile: str = "baseline") -> None:
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument(
         "--profile",
-        choices=["baseline", "openai", "local"],
+        choices=["baseline", "openai"],
         default=default_profile,
     )
     # 필터 로직 추가

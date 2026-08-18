@@ -15,7 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Retrieval 프로필별 RAG 평가")
     parser.add_argument(
         "--profile",
-        choices=["baseline", "openai", "local"],
+        choices=["baseline", "openai"],
         default="baseline",
     )
     args = parser.parse_args()

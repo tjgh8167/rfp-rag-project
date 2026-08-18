@@ -2,7 +2,7 @@
 
 ## 목적
 
-원본 `/data/original_data/data_list.csv`의 한 행을 RFP 한 문서로 보고, 두 Retriever가 같은 이름의 메타데이터 필드를 사용하도록 `/data/processed/metadata.csv`를 생성한다.
+원본 `/data/original_data/data_list.csv`의 한 행을 RFP 한 문서로 보고, Retriever와 Generation이 같은 이름의 메타데이터 필드를 사용하도록 `/data/processed/metadata.csv`를 생성한다.
 
 - 행 수: 원본 CSV와 동일하게 문서당 1행
 - `doc_id`: 원본 CSV의 현재 행 순서 기준 `doc_001` 형식
