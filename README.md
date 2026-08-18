@@ -207,6 +207,13 @@ python evaluate.py --profile openai
 
 이 경험을 통해 문서를 이해하고, 검색 기준을 세우고, 검색 결과를 실제 답변 품질과 연결하는 RAG 엔지니어링 흐름을 경험했습니다.
 
+## 개발 기록
+
+프로젝트 진행 중 검색과 생성 품질을 비교하기 위해 실험 조건, 질문, 답변 품질, 응답 속도를 스프레드시트로 기록했습니다.
+
+- [Retriever 개발 기록](https://docs.google.com/spreadsheets/d/1-hHttar1YpWyuZpypGXx_zQxLYgtLELibN-__yGV7JA/edit?gid=791871327#gid=791871327): OpenAI embedding, Chroma DB, `fetch_k`/`top_k`, metadata filtering, MMR, Hybrid Search, Re-ranking 실험 기록
+- [Generation 개발 기록](https://docs.google.com/spreadsheets/d/1-hHttar1YpWyuZpypGXx_zQxLYgtLELibN-__yGV7JA/edit?gid=951518135#gid=951518135): 모델, 프롬프트 버전, `reasoning_effort`, `max_tokens`, 답변 품질, 응답 속도 비교 기록
+
 ## 관련 문서
 
 - [기여 정리](docs/contribution.md)
