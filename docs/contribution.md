@@ -2,7 +2,7 @@
 
 ## 역할
 
-정서호 / Retriever 2
+정서호 / Retriever
 
 RFP 기반 RAG 시스템에서 사용자의 질문과 관련된 근거 청크를 찾는 Retriever 파트를 담당했습니다. OpenAI Embedding과 Chroma DB를 기반으로 기본 검색 흐름을 만들고, 검색 품질을 높이기 위해 metadata filtering, MMR, Hybrid Search, Re-ranking 구조를 연결했습니다.
 
